@@ -34,21 +34,23 @@ using namespace cv::detail;
 
 std::mutex cout_mutex;
 
-int const NUM_IMAGES = 3;			//2		//6
+int const NUM_IMAGES = 2;			//2		//6
 double const WORK_MEGAPIX = 0.6;	//0.6;	//-1			// Megapix parameter is scaled to the number
 double const SEAM_MEAGPIX = 0.01;							// of pixels in full image and this is used
 double const COMPOSE_MEGAPIX = 1.4;	//1.4;	//2.2;	//-1	// as a scaling factor when resizing images
 float const MATCH_CONF = 0.3f;
-float const CONF_THRESH = 1.0f;
+float const CONF_THRESH = .8f;
 int const BLEND_TYPE = Blender::MULTI_BAND;					// Feather blending leaves ugly seams
 float const BLEND_STRENGTH = 5;
 int const HESS_THRESH = 300;
 int const NOCTAVES = 4;
 int const NOCTAVESLAYERS = 2;
-int skip_frames = 5;
+int skip_frames = 70;
+bool recalibrate = false;
 
 // Test material before right videos are obtained from the camera rig
 vector<VideoCapture> CAPTURES;
+vector<String> video_files = {"videos/l.mp4", "videos/r.mp4"};
 
 // Print function for parallel threads - debugging
 void msg(String const message, double const value, int const thread_id)
@@ -133,8 +135,8 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
 	for (int i = 0; i < cameras.size(); i++)
 	{
 		focals[i] = cameras[i].focal;
-		std::cout << "R = " << std::endl << " " << cameras[i].R << std::endl << std::endl;
-		std::cout << "t = " << std::endl << " " << cameras[i].t << std::endl << std::endl;
+		//std::cout << "R = " << std::endl << " " << cameras[i].R << std::endl << std::endl;
+		//std::cout << "t = " << std::endl << " " << cameras[i].t << std::endl << std::endl;
 	}
 
 	sort(focals.begin(), focals.end());
@@ -171,7 +173,7 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
 		float &blend_width, Size &full_img_size)
 {
 	// STEP 1: reading images, feature finding and matching // ------------------------------------------------------------------
-
+	int64 t = getTickCount();
 	double work_scale = 1;
 	double seam_scale = 1;
 	double seam_work_aspect = 1;
@@ -190,8 +192,12 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
 		}
 	}
 	full_img_size = full_img[0].size();
+	LOGLN("Reading: " << (getTickCount()-t)*1000/getTickFrequency());
+	t = getTickCount();
 
 	findFeatures(full_img, images, features, work_scale, seam_scale, seam_work_aspect);
+	LOGLN("Find features: " << (getTickCount()-t)*1000/getTickFrequency());
+	t = getTickCount();
 
 	vector<MatchesInfo> pairwise_matches;
 	Ptr<FeaturesMatcher> matcher = makePtr<BestOf2NearestMatcher>(true, MATCH_CONF);
@@ -200,11 +206,15 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
 	(*matcher)(features, pairwise_matches);
 	matcher->collectGarbage();
 
+	LOGLN("Matches: " << (getTickCount()-t)*1000/getTickFrequency());
+	t = getTickCount();
 	// STEP 2: estimating homographies // ---------------------------------------------------------------------------------------
 	vector<CameraParams> cameras;
 	float warped_image_scale;
 	calibrateCameras(features, pairwise_matches, cameras, warped_image_scale);
 
+	LOGLN("Calibrate: " << (getTickCount()-t)*1000/getTickFrequency());
+	t = getTickCount();
 
 	// STEP 3: warping images // ------------------------------------------------------------------------------------------------
 
@@ -246,6 +256,8 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
 		images_warped[i].convertTo(images_warped_f[i], CV_32F);
 	}
 
+	LOGLN("Warping: " << (getTickCount()-t)*1000/getTickFrequency());
+	t = getTickCount();
 	// STEP 4: compensating exposure and finding seams // -----------------------------------------------------------------------
 
 	Ptr<ExposureCompensator> compensator = ExposureCompensator::createDefault(ExposureCompensator::GAIN);
@@ -259,6 +271,8 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
 	images_warped.clear();
 	images_warped_f.clear();
 	masks.clear();
+	LOGLN("Find seams: " << (getTickCount()-t)*1000/getTickFrequency());
+	t = getTickCount();
 
 	//  STEP 5: composing panorama // -------------------------------------------------------------------------------------------
 
@@ -392,6 +406,8 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
 
 	blender->blend(result, result_mask);
 
+	LOGLN("Compose: " << (getTickCount()-t)*1000/getTickFrequency());
+	t = getTickCount();
 	// WHAT HAPPEN TO THE FINAL PANORAMA? - writing to file is only here for debugging 
 	cv::imwrite("calib.jpg", result);
 
@@ -499,27 +515,17 @@ int main(int argc, char* argv[])
 
 	// Videofeed input --------------------------------------------------------
 	
-	VideoCapture capture0("videos/3.mp4");
-	VideoCapture capture1("videos/4.mp4");
-	VideoCapture capture2("videos/5.mp4");
-
-	if ((!capture0.isOpened()) || (!capture1.isOpened()))
-	{
-		LOGLN("ERROR: Unable to open videofile(s).");
-		return -1;
+	for(int i = 0; i < NUM_IMAGES; ++i) {
+		CAPTURES.push_back(VideoCapture(video_files[i]));
+		if(!CAPTURES[i].isOpened()) {
+			LOGLN("ERROR: Unable to open videofile(s).");
+			return -1;
+		}
+		CAPTURES[i].set(CV_CAP_PROP_POS_FRAMES, skip_frames);
 	}
-
-	capture0.set(CV_CAP_PROP_POS_FRAMES, skip_frames);
-	capture1.set(CV_CAP_PROP_POS_FRAMES, skip_frames);
-	capture2.set(CV_CAP_PROP_POS_FRAMES, skip_frames);
-
-	CAPTURES.push_back(capture0);
-	CAPTURES.push_back(capture1);
-	CAPTURES.push_back(capture2);
 	// ------------------------------------------------------------------------
 
 	// OFFLINE CALIBRATION // ---------------------------------------------------------------------------------------------------
-	int64 start = getTickCount();
 
 	vector<cuda::GpuMat> x_maps(NUM_IMAGES);
 	vector<cuda::GpuMat> y_maps(NUM_IMAGES);
@@ -535,6 +541,14 @@ int main(int argc, char* argv[])
 	vector<Size> sizes(NUM_IMAGES);
 
 	//if (!stitch_calib(x_maps, y_maps, compose_scale, blender, blend_width, full_img_size, corners, sizes))
+	if (!stitch_calib(x_maps, y_maps, compose_scale, blender, blend_width, full_img_size))
+	{
+		LOGLN("");
+		LOGLN("Calibration failed!");
+		return -1;
+	}
+	blender = Blender::createDefault(Blender::MULTI_BAND, true);
+	int64 start = getTickCount();
 	if (!stitch_calib(x_maps, y_maps, compose_scale, blender, blend_width, full_img_size))
 	{
 		LOGLN("");
@@ -589,6 +603,16 @@ int main(int argc, char* argv[])
 	// ONLINE STITCHING // ------------------------------------------------------------------------------------------------------
 	while(1) 
 	{
+		if (frame_amt && (frame_amt % 30 == 0) && recalibrate) {
+			blender = Blender::createDefault(Blender::MULTI_BAND, true);
+			if (!stitch_calib(x_maps, y_maps, compose_scale, blender, blend_width, full_img_size))
+			{
+				LOGLN("");
+				LOGLN("Calibration failed!");
+				return -1;
+			}
+			mb = dynamic_cast<MultiBandBlender*>(blender.get());
+		}
 		vector<Mat> input;
 		bool capped = getImages(CAPTURES, input);
 		if (!capped) {
