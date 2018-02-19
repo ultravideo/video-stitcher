@@ -57,6 +57,38 @@ void msg(String const message, double const value, int const thread_id)
 	std::cout << thread_id << ": " << message << value << std::endl;
 	cout_mutex.unlock();
 }
+void findFeatures(vector<Mat> &full_img, vector<Mat> &images, vector<ImageFeatures> &features,
+				  double &work_scale, double &seam_scale, double &seam_work_aspect) {
+	Ptr<FeaturesFinder> finder = makePtr<SurfFeaturesFinderGpu>();
+	// Read images from file and resize if necessary
+	for (int i = 0; i < NUM_IMAGES; i++)
+	{
+		// Negative value means processing images in the original size
+		if (WORK_MEGAPIX < 0)
+		{
+			images[i] = full_img[i];
+			work_scale = 1;
+		}
+		// Else downscale images to speed up the process
+		else
+		{
+			work_scale = min(1.0, sqrt(WORK_MEGAPIX * 1e6 / full_img[i].size().area()));
+			cv::resize(full_img[i], images[i], Size(), work_scale, work_scale);
+		}
+
+		// Calculate scale for downscaling done in seam finding process
+		seam_scale = min(1.0, sqrt(SEAM_MEAGPIX * 1e6 / full_img[i].size().area()));
+		seam_work_aspect = seam_scale / work_scale;
+
+		// Find features with SURF feature finder
+		(*finder)(images[i], features[i]);
+		features[i].img_idx = i;
+
+		// Resize images for seam process
+		cv::resize(full_img[i], images[i], Size(), seam_scale, seam_scale);
+	}
+	finder->collectGarbage();
+}
   // Takes in maps for 3D remapping, compose scale for sizing final panorama, blender and image size.
   // Returns true if all the phases of calibration are successful.
 	bool stitch_calib(vector<cuda::GpuMat> &x_maps, vector<cuda::GpuMat> &y_maps, double &compose_scale, Ptr<Blender> &blender,
@@ -68,69 +100,22 @@ void msg(String const message, double const value, int const thread_id)
 	double seam_scale = 1;
 	double seam_work_aspect = 1;
 
-	bool is_work_scale_set = false;
-	bool is_seam_scale_set = false;
-
-	Ptr<FeaturesFinder> finder = makePtr<SurfFeaturesFinderGpu>();
 
 	vector<Mat> full_img(NUM_IMAGES);
 	vector<Mat> img(NUM_IMAGES);
 	vector<Mat> images(NUM_IMAGES);
 	vector<ImageFeatures> features(NUM_IMAGES);
 
-	// Read images from file and resize if necessary
-	for (int i = 0; i < NUM_IMAGES; i++)
-	{
-		// SOMEHOW CAPTURE VIDEOFRAMES - What's the final version?!
-		//full_img[i] = imread(FILES[i]);
+	for (int i = 0; i < NUM_IMAGES; ++i) {
 		CAPTURES[i].read(full_img[i]);
-
-		if (full_img[i].empty())
-		{
+		if (full_img[i].empty()) {
 			LOGLN("Can't read frame from camera/file nro " << i << "...");
 			return false;
 		}
-
-		if (i == 0)
-		{
-			full_img_size = full_img[i].size();
-		}
-
-		// Negative value means processing images in the original size
-		if (WORK_MEGAPIX < 0)
-		{
-			img[i] = full_img[i];
-			work_scale = 1;
-			is_work_scale_set = true;
-		}
-		// Else downscale images to speed up the process
-		else
-		{
-			if (!is_work_scale_set)
-			{
-				work_scale = min(1.0, sqrt(WORK_MEGAPIX * 1e6 / full_img[i].size().area()));
-				is_work_scale_set = true;
-			}
-			cv::resize(full_img[i], img[i], Size(), work_scale, work_scale);
-		}
-
-		// Calculate scale for downscaling done in seam finding process
-		if (!is_seam_scale_set)
-		{
-			seam_scale = min(1.0, sqrt(SEAM_MEAGPIX * 1e6 / full_img[i].size().area()));
-			seam_work_aspect = seam_scale / work_scale;
-			is_seam_scale_set = true;
-		}
-
-		// Find features with SURF feature finder
-		(*finder)(img[i], features[i]);
-		features[i].img_idx = i;
-
-		// Resize images for seam process
-		cv::resize(full_img[i], img[i], Size(), seam_scale, seam_scale);
-		images[i] = img[i].clone();
 	}
-	finder->collectGarbage();
+	full_img_size = full_img[0].size();
+
+	findFeatures(full_img, images, features, work_scale, seam_scale, seam_work_aspect);
 
 	vector<MatchesInfo> pairwise_matches;
 	Ptr<FeaturesMatcher> matcher = makePtr<BestOf2NearestMatcher>(true, MATCH_CONF);
