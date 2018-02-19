@@ -89,6 +89,82 @@ void findFeatures(vector<Mat> &full_img, vector<Mat> &images, vector<ImageFeatur
 	}
 	finder->collectGarbage();
 }
+
+bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pairwise_matches, vector<CameraParams> &cameras, float &warped_image_scale) {
+	Ptr<Estimator> estimator = makePtr<HomographyBasedEstimator>();
+
+	// Rough estimation of the homographies
+	if (!(*estimator)(features, pairwise_matches, cameras))
+	{
+		LOGLN("Homography estimation failed...");
+		return false;
+	}
+
+	// Convert rotation matrix into a type: 32-bit float
+#pragma omp parallel for
+	for (int i = 0; i < cameras.size(); i++)
+	{
+		Mat R;
+		cameras[i].R.convertTo(R, CV_32F);
+		cameras[i].R = R;
+	}
+
+	Ptr<BundleAdjusterBase> adjuster = makePtr<BundleAdjusterRay>();
+	Mat_<uchar> refine_mask = Mat::zeros(3, 3, CV_8U);
+	refine_mask(0, 0) = 1;
+	refine_mask(0, 1) = 1;
+	refine_mask(0, 2) = 1;
+	refine_mask(1, 1) = 1;
+	refine_mask(1, 2) = 1;
+
+	adjuster->setConfThresh(CONF_THRESH);
+	adjuster->setRefinementMask(refine_mask);
+
+	// Calculate final estimation of the homographies
+	if (!(*adjuster)(features, pairwise_matches, cameras))
+	{
+		LOGLN("Camera parameters adjusting failed...");
+		return false;
+	}
+	// Calculation of the mean focal for the warping scale
+	vector<double> focals((int)cameras.size());
+
+#pragma omp parallel for
+	for (int i = 0; i < cameras.size(); i++)
+	{
+		focals[i] = cameras[i].focal;
+		std::cout << "R = " << std::endl << " " << cameras[i].R << std::endl << std::endl;
+		std::cout << "t = " << std::endl << " " << cameras[i].t << std::endl << std::endl;
+	}
+
+	sort(focals.begin(), focals.end());
+
+
+	if (focals.size() % 2 == 1)
+	{
+		warped_image_scale = static_cast<float>(focals[focals.size() / 2]);
+	}
+	else
+	{
+		warped_image_scale = static_cast<float>(focals[focals.size() / 2 - 1] + focals[focals.size() / 2]) * 0.5f;
+	}
+
+	// Do wave correct i.e. try to make panorama more lined-up horizontally
+	vector<Mat> rmats((int)cameras.size());
+#pragma omp parallel for
+	for (int i = 0; i < cameras.size(); i++)
+	{
+		rmats[i] = cameras[i].R.clone();
+	}
+
+	waveCorrect(rmats, WAVE_CORRECT_HORIZ);
+
+#pragma omp parallel for
+	for (int i = 0; i < cameras.size(); i++)
+	{
+		cameras[i].R = rmats[i];
+	}
+}
   // Takes in maps for 3D remapping, compose scale for sizing final panorama, blender and image size.
   // Returns true if all the phases of calibration are successful.
 	bool stitch_calib(vector<cuda::GpuMat> &x_maps, vector<cuda::GpuMat> &y_maps, double &compose_scale, Ptr<Blender> &blender,
@@ -124,92 +200,11 @@ void findFeatures(vector<Mat> &full_img, vector<Mat> &images, vector<ImageFeatur
 	(*matcher)(features, pairwise_matches);
 	matcher->collectGarbage();
 
-	/*
-	// saving matches graph -file, which contains info from matching
-	LOGLN("Saving matches graph...");
-	std::ofstream f("graph.txt");
-	vector<String> names = {"pic1", "pic2", "pic3" , "pic4" };
-	f << matchesGraphAsString(names, pairwise_matches, CONF_THRESH);
-	*/
-
 	// STEP 2: estimating homographies // ---------------------------------------------------------------------------------------
-
-	Ptr<Estimator> estimator = makePtr<HomographyBasedEstimator>();
 	vector<CameraParams> cameras;
-
-	// Rough estimation of the homographies
-	if (!(*estimator)(features, pairwise_matches, cameras))
-	{
-		LOGLN("Homography estimation failed...");
-		return false;
-	}
-
-	// Convert rotation matrix into a type: 32-bit float
-#pragma omp parallel for
-	for (int i = 0; i < cameras.size(); i++)
-	{
-		Mat R;
-		cameras[i].R.convertTo(R, CV_32F);
-		cameras[i].R = R;
-	}
-
-	Ptr<BundleAdjusterBase> adjuster = makePtr<BundleAdjusterRay>();
-	Mat_<uchar> refine_mask = Mat::zeros(3, 3, CV_8U);
-	refine_mask(0, 0) = 1;
-	refine_mask(0, 1) = 1;
-	refine_mask(0, 2) = 1;
-	refine_mask(1, 1) = 1;
-	refine_mask(1, 2) = 1;
-
-	adjuster->setConfThresh(CONF_THRESH);
-	adjuster->setRefinementMask(refine_mask);
-
-	// Calculate final estimation of the homographies
-	if (!(*adjuster)(features, pairwise_matches, cameras))
-	{
-		LOGLN("Camera parameters adjusting failed...");
-		return false;
-	}
-
-	// Calculation of the mean focal for the warping scale
-	vector<double> focals((int)cameras.size());
-
-#pragma omp parallel for
-	for (int i = 0; i < cameras.size(); i++)
-	{
-		focals[i] = cameras[i].focal;
-		std::cout << "R = " << std::endl << " " << cameras[i].R << std::endl << std::endl;
-		std::cout << "t = " << std::endl << " " << cameras[i].t << std::endl << std::endl;
-	}
-
-	sort(focals.begin(), focals.end());
-
 	float warped_image_scale;
+	calibrateCameras(features, pairwise_matches, cameras, warped_image_scale);
 
-	if (focals.size() % 2 == 1)
-	{
-		warped_image_scale = static_cast<float>(focals[focals.size() / 2]);
-	}
-	else
-	{
-		warped_image_scale = static_cast<float>(focals[focals.size() / 2 - 1] + focals[focals.size() / 2]) * 0.5f;
-	}
-
-	// Do wave correct i.e. try to make panorama more lined-up horizontally
-	vector<Mat> rmats((int)cameras.size());
-#pragma omp parallel for
-	for (int i = 0; i < cameras.size(); i++)
-	{
-		rmats[i] = cameras[i].R.clone();
-	}
-
-	waveCorrect(rmats, WAVE_CORRECT_HORIZ);
-
-#pragma omp parallel for
-	for (int i = 0; i < cameras.size(); i++)
-	{
-		cameras[i].R = rmats[i];
-	}
 
 	// STEP 3: warping images // ------------------------------------------------------------------------------------------------
 
