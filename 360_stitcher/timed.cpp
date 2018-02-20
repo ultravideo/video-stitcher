@@ -18,6 +18,9 @@
 #include "opencv2/stitching/detail/warpers.hpp"
 #include "opencv2/stitching/warpers.hpp"
 #include "opencv2/cudawarping.hpp"
+#include "opencv2/cudafilters.hpp"
+#include "opencv2/cudaimgproc.hpp"
+#include "opencv2/cudaarithm.hpp"
 
 #include <fstream>
 #include <thread>
@@ -39,18 +42,18 @@ double const WORK_MEGAPIX = 0.6;	//0.6;	//-1			// Megapix parameter is scaled to
 double const SEAM_MEAGPIX = 0.01;							// of pixels in full image and this is used
 double const COMPOSE_MEGAPIX = 1.4;	//1.4;	//2.2;	//-1	// as a scaling factor when resizing images
 float const MATCH_CONF = 0.3f;
-float const CONF_THRESH = .8f;
+float const CONF_THRESH = .5f;
 int const BLEND_TYPE = Blender::MULTI_BAND;					// Feather blending leaves ugly seams
 float const BLEND_STRENGTH = 5;
 int const HESS_THRESH = 300;
 int const NOCTAVES = 4;
 int const NOCTAVESLAYERS = 2;
-int skip_frames = 70;
+int skip_frames = 50;
 bool recalibrate = false;
 
 // Test material before right videos are obtained from the camera rig
 vector<VideoCapture> CAPTURES;
-vector<String> video_files = {"videos/l.mp4", "videos/r.mp4"};
+vector<String> video_files = {"videos/-3.mp4", "videos/-4.mp4"};
 
 // Print function for parallel threads - debugging
 void msg(String const message, double const value, int const thread_id)
@@ -61,7 +64,7 @@ void msg(String const message, double const value, int const thread_id)
 }
 void findFeatures(vector<Mat> &full_img, vector<Mat> &images, vector<ImageFeatures> &features,
 				  double &work_scale, double &seam_scale, double &seam_work_aspect) {
-	Ptr<FeaturesFinder> finder = makePtr<SurfFeaturesFinderGpu>();
+	Ptr<FeaturesFinder> finder = makePtr<SurfFeaturesFinderGpu>(HESS_THRESH, NOCTAVES, NOCTAVESLAYERS);
 	// Read images from file and resize if necessary
 	for (int i = 0; i < NUM_IMAGES; i++)
 	{
@@ -180,7 +183,6 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
 
 
 	vector<Mat> full_img(NUM_IMAGES);
-	vector<Mat> img(NUM_IMAGES);
 	vector<Mat> images(NUM_IMAGES);
 	vector<ImageFeatures> features(NUM_IMAGES);
 
@@ -262,6 +264,7 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
 
 	Ptr<ExposureCompensator> compensator = ExposureCompensator::createDefault(ExposureCompensator::GAIN);
 	compensator->feed(corners, images_warped, masks_warped);
+	cv::detail::GainCompensator* gain_comp = dynamic_cast<cv::detail::GainCompensator*>(compensator.get());
 
 	Ptr<SeamFinder> seam_finder = makePtr<VoronoiSeamFinder>();
 	seam_finder->find(images_warped_f, corners, masks_warped);
@@ -290,6 +293,8 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
 	// Update warped image scale
 	warped_image_scale *= static_cast<float>(compose_work_aspect);
 	warper = warper_creator->create(warped_image_scale);
+	cv::detail::SphericalWarperGpu* gpu_warper = dynamic_cast<cv::detail::SphericalWarperGpu*>(warper.get());
+
 
 	Size sz = full_img_size;
 
@@ -335,78 +340,117 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
 
 	blender->prepare(corners, sizes);
 
+	LOGLN("Prepare: " << (getTickCount()-t)*1000/getTickFrequency());
+	t = getTickCount();
 	Mat img_warped;
 	Mat img_warped_s;
 	Mat dilated_mask;
 	Mat seam_mask;
 	Mat mask;
 
-	vector<cuda::GpuMat> gpu_mask_warped(NUM_IMAGES);
 	Size img_size;
 
+	t = getTickCount();
+	int64 start = getTickCount();
+	cuda::Stream stream;
+	cuda::GpuMat gpu_img;
+	cuda::GpuMat gpu_img_small;
+	cuda::GpuMat gpu_mask;
+	cuda::GpuMat gpu_img_warped;
+	cuda::GpuMat gpu_mask_warped;
+	cuda::GpuMat gpu_seam_mask;
+	vector<Mat> img(NUM_IMAGES);
+	vector<Mat> mask_warped(NUM_IMAGES);
+	//Ptr<cuda::Filter> dilation_filter = cuda::createMorphologyFilter(MORPH_DILATE, full_img[0].type(), Mat());
 	for (int img_idx = 0; img_idx < NUM_IMAGES; img_idx++)
 	{
+		gpu_img.upload(full_img[img_idx], stream);
 		if (abs(compose_scale - 1) > 1e-1)
 		{
-			resize(full_img[img_idx], img[img_idx], Size(), compose_scale, compose_scale);
+			cuda::resize(gpu_img, gpu_img_small, Size(), compose_scale, compose_scale, 1, stream);
 		}
 		else
 		{
-			img[img_idx] = full_img[img_idx];
+			gpu_img.convertTo(gpu_img_small, gpu_img.type(), stream);
 		}
+		LOGLN(img_idx << "--Resize in feed: " << (getTickCount()-t)*1000/getTickFrequency());
+		t = getTickCount();
 
 		full_img[img_idx].release();
 
-		img_size = img[img_idx].size();
+		img_size = gpu_img_small.size();
 
 		Mat K;
 		cameras[img_idx].K().convertTo(K, CV_32F);
 
+		LOGLN(img_idx << "--Convert in feed: " << (getTickCount()-t)*1000/getTickFrequency());
+		t = getTickCount();
 		// Warp the current image
-		warper->warp(img[img_idx], K, cameras[img_idx].R, INTER_LINEAR, BORDER_REFLECT, img_warped);
+		//warper->warp(img[img_idx], K, cameras[img_idx].R, INTER_LINEAR, BORDER_REFLECT, img_warped);
+		gpu_warper->warp(gpu_img_small, K, cameras[img_idx].R, INTER_LINEAR, BORDER_REFLECT, gpu_img_warped);
 
-		Mat x_map;
-		Mat y_map;
+		LOGLN(img_idx << "--Warping in feed: " << (getTickCount()-t)*1000/getTickFrequency());;
+		t = getTickCount();
 
 		// Create warping map for online process
-		warper->buildMaps(img[img_idx].size(), K, cameras[img_idx].R, x_map, y_map);
+		gpu_warper->buildMaps(img_size, K, cameras[img_idx].R, x_maps[img_idx], y_maps[img_idx]);
+		LOGLN(img_idx << "--Build maps: " << (getTickCount()-t)*1000/getTickFrequency());
+		t = getTickCount();
 
 		// Upload to gpu memory
-		x_maps[img_idx].upload(x_map);
-		y_maps[img_idx].upload(y_map);
+		//x_maps[img_idx].upload(x_map, stream);
+		//y_maps[img_idx].upload(y_map, stream);
+		LOGLN(img_idx << "--Upload maps: " << (getTickCount()-t)*1000/getTickFrequency());
+		t = getTickCount();
 
 		// Warp the current image mask
-		mask.create(img_size, CV_8U);
-		mask.setTo(Scalar::all(255));
+		gpu_mask.create(img_size, CV_8U);
+		gpu_mask.setTo(Scalar::all(255));
 
-		vector<Mat> mask_warped(NUM_IMAGES);
 
-		warper->warp(mask, K, cameras[img_idx].R, INTER_NEAREST, BORDER_CONSTANT, mask_warped[img_idx]);
+		//warper->warp(mask, K, cameras[img_idx].R, INTER_NEAREST, BORDER_CONSTANT, gpu_mask_warped);
+		gpu_warper->warp(gpu_mask, K, cameras[img_idx].R, INTER_NEAREST, BORDER_CONSTANT, gpu_mask_warped);
+		LOGLN(img_idx << "--Warp mask in feed: " << (getTickCount()-t)*1000/getTickFrequency());
+		t = getTickCount();
 
 		// Apply exposure compensation
-		compensator->apply(img_idx, corners[img_idx], img_warped, mask_warped[img_idx]);
+		//compensator->apply(img_idx, corners[img_idx], img_warped, mask_warped[img_idx]);
+		gain_comp->apply_gpu(img_idx, corners[img_idx], gpu_img_warped, gpu_mask_warped);
 
-		img_warped.convertTo(img_warped_s, CV_16S);
+		LOGLN(img_idx << "--Apply compensator: " << (getTickCount()-t)*1000/getTickFrequency());
+		t = getTickCount();
+		gpu_img_warped.convertTo(gpu_img_warped, CV_16S, stream);
 
-		img_warped.release();
-		img[img_idx].release();
-		mask.release();
+		//img_warped.release();
+		//img[img_idx].release();
+		//mask.release();
 
+		gpu_mask_warped.download(mask_warped[img_idx]);
 		cv::dilate(masks_warped[img_idx], dilated_mask, Mat());
 		cv::resize(dilated_mask, seam_mask, mask_warped[img_idx].size());
 		mask_warped[img_idx] = seam_mask & mask_warped[img_idx];
-		gpu_mask_warped[img_idx].upload(masks_warped[img_idx]);
+		//dilation_filter->apply(gpu_mask_warped, seam_mask, stream);
+		//cuda::resize(seam_mask, seam_mask, gpu_mask_warped.size(), 0.0, 0.0, 1, stream);
+		//cuda::bitwise_and(gpu_seam_mask, gpu_mask_warped, gpu_mask_warped, noArray(), stream);
+		LOGLN(img_idx << "--Rando stuff: " << (getTickCount()-t)*1000/getTickFrequency());
+		t = getTickCount();
 
+		gpu_img_warped.download(img_warped_s);
 		// Blend the current image
 		blender->feed(img_warped_s, mask_warped[img_idx], corners[img_idx]);
+		LOGLN(img_idx << "--Feed images: " << (getTickCount()-t)*1000/getTickFrequency());
+		t = getTickCount();
 	}
+	LOGLN("Feed images: " << (getTickCount()-start)*1000/getTickFrequency());
+	t = getTickCount();
+
 
 	Mat result;
 	Mat result_mask;
 
 	blender->blend(result, result_mask);
 
-	LOGLN("Compose: " << (getTickCount()-t)*1000/getTickFrequency());
+	LOGLN("Blend pano: " << (getTickCount()-t)*1000/getTickFrequency());
 	t = getTickCount();
 	// WHAT HAPPEN TO THE FINAL PANORAMA? - writing to file is only here for debugging 
 	cv::imwrite("calib.jpg", result);
