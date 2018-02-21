@@ -37,7 +37,7 @@ using namespace cv::detail;
 
 std::mutex cout_mutex;
 
-int const NUM_IMAGES = 2;			//2		//6
+int const NUM_IMAGES = 3;			//2		//6
 double const WORK_MEGAPIX = 0.6;	//0.6;	//-1			// Megapix parameter is scaled to the number
 double const SEAM_MEAGPIX = 0.01;							// of pixels in full image and this is used
 double const COMPOSE_MEGAPIX = 1.4;	//1.4;	//2.2;	//-1	// as a scaling factor when resizing images
@@ -53,7 +53,7 @@ bool recalibrate = false;
 
 // Test material before right videos are obtained from the camera rig
 vector<VideoCapture> CAPTURES;
-vector<String> video_files = {"videos/-3.mp4", "videos/-4.mp4"};
+vector<String> video_files = {"videos/3.mp4", "videos/4.mp4", "videos/5.mp4"};
 
 // Print function for parallel threads - debugging
 void msg(String const message, double const value, int const thread_id)
@@ -62,9 +62,11 @@ void msg(String const message, double const value, int const thread_id)
 	std::cout << thread_id << ": " << message << value << std::endl;
 	cout_mutex.unlock();
 }
-void findFeatures(vector<Mat> &full_img, vector<Mat> &images, vector<ImageFeatures> &features,
+void findFeatures(vector<Mat> &full_img, vector<Mat> &images, vector<cuda::GpuMat> &gpu_images, vector<ImageFeatures> &features,
 				  double &work_scale, double &seam_scale, double &seam_work_aspect) {
 	Ptr<FeaturesFinder> finder = makePtr<SurfFeaturesFinderGpu>(HESS_THRESH, NOCTAVES, NOCTAVESLAYERS);
+	SurfFeaturesFinderGpu* gpu_finder = dynamic_cast<SurfFeaturesFinderGpu*>(finder.get());
+	cuda::Stream stream;
 	// Read images from file and resize if necessary
 	for (int i = 0; i < NUM_IMAGES; i++)
 	{
@@ -80,6 +82,7 @@ void findFeatures(vector<Mat> &full_img, vector<Mat> &images, vector<ImageFeatur
 			work_scale = min(1.0, sqrt(WORK_MEGAPIX * 1e6 / full_img[i].size().area()));
 			cv::resize(full_img[i], images[i], Size(), work_scale, work_scale);
 		}
+		//gpu_images[i].upload(images[i]);
 
 		// Calculate scale for downscaling done in seam finding process
 		seam_scale = min(1.0, sqrt(SEAM_MEAGPIX * 1e6 / full_img[i].size().area()));
@@ -87,10 +90,12 @@ void findFeatures(vector<Mat> &full_img, vector<Mat> &images, vector<ImageFeatur
 
 		// Find features with SURF feature finder
 		(*finder)(images[i], features[i]);
+		//gpu_finder->find(gpu_images[i], features[i]);
 		features[i].img_idx = i;
 
 		// Resize images for seam process
 		cv::resize(full_img[i], images[i], Size(), seam_scale, seam_scale);
+		gpu_images[i].upload(full_img[i], stream);
 	}
 	finder->collectGarbage();
 }
@@ -172,8 +177,8 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
 }
   // Takes in maps for 3D remapping, compose scale for sizing final panorama, blender and image size.
   // Returns true if all the phases of calibration are successful.
-	bool stitch_calib(vector<cuda::GpuMat> &x_maps, vector<cuda::GpuMat> &y_maps, double &compose_scale, Ptr<Blender> &blender,
-		float &blend_width, Size &full_img_size)
+bool stitch_calib(vector<cuda::GpuMat> &x_maps, vector<cuda::GpuMat> &y_maps, double &compose_scale, Ptr<Blender> &blender,
+	  float &blend_width, Size &full_img_size)
 {
 	// STEP 1: reading images, feature finding and matching // ------------------------------------------------------------------
 	int64 t = getTickCount();
@@ -184,6 +189,7 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
 
 	vector<Mat> full_img(NUM_IMAGES);
 	vector<Mat> images(NUM_IMAGES);
+	vector<cuda::GpuMat> gpu_images(NUM_IMAGES);
 	vector<ImageFeatures> features(NUM_IMAGES);
 
 	for (int i = 0; i < NUM_IMAGES; ++i) {
@@ -197,7 +203,7 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
 	LOGLN("Reading: " << (getTickCount()-t)*1000/getTickFrequency());
 	t = getTickCount();
 
-	findFeatures(full_img, images, features, work_scale, seam_scale, seam_work_aspect);
+	findFeatures(full_img, images, gpu_images, features, work_scale, seam_scale, seam_work_aspect);
 	LOGLN("Find features: " << (getTickCount()-t)*1000/getTickFrequency());
 	t = getTickCount();
 
@@ -342,16 +348,12 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
 
 	LOGLN("Prepare: " << (getTickCount()-t)*1000/getTickFrequency());
 	t = getTickCount();
-	Mat img_warped;
-	Mat img_warped_s;
-	Mat dilated_mask;
-	Mat seam_mask;
-	Mat mask;
 
-	Size img_size;
 
 	t = getTickCount();
+	MultiBandBlender* mb = dynamic_cast<MultiBandBlender*>(blender.get());
 	int64 start = getTickCount();
+	Size img_size;
 	cuda::Stream stream;
 	cuda::GpuMat gpu_img;
 	cuda::GpuMat gpu_mask;
@@ -416,10 +418,8 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
 		LOGLN(img_idx << "--Rando stuff: " << (getTickCount()-t)*1000/getTickFrequency());
 		t = getTickCount();
 
-		gpu_img.download(img_warped_s);
-		gpu_mask_warped.download(mask_warped);
 		// Blend the current image
-		blender->feed(img_warped_s, mask_warped, corners[img_idx]);
+		mb->init_gpu(gpu_img, gpu_mask_warped, corners[img_idx]);
 		LOGLN(img_idx << "--Feed images: " << (getTickCount()-t)*1000/getTickFrequency());
 		t = getTickCount();
 	}
@@ -435,10 +435,12 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
 	LOGLN("Blend pano: " << (getTickCount()-t)*1000/getTickFrequency());
 	t = getTickCount();
 	// WHAT HAPPEN TO THE FINAL PANORAMA? - writing to file is only here for debugging 
-	cv::imwrite("calib.jpg", result);
+	//cv::imwrite("calib.jpg", result);
 
 	return true;
 }
+
+
 vector<cuda::GpuMat> full_imgs(NUM_IMAGES);
 vector<cuda::GpuMat> images(NUM_IMAGES);
 int printing = -1;
@@ -565,7 +567,7 @@ int main(int argc, char* argv[])
 	Ptr<Blender> blender = Blender::createDefault(Blender::MULTI_BAND, true);
 	vector<Point> corners(NUM_IMAGES);
 	vector<Size> sizes(NUM_IMAGES);
-
+	vector<CameraParams> cameras;
 	//if (!stitch_calib(x_maps, y_maps, compose_scale, blender, blend_width, full_img_size, corners, sizes))
 	if (!stitch_calib(x_maps, y_maps, compose_scale, blender, blend_width, full_img_size))
 	{
@@ -629,20 +631,21 @@ int main(int argc, char* argv[])
 	// ONLINE STITCHING // ------------------------------------------------------------------------------------------------------
 	while(1) 
 	{
-		if (frame_amt && (frame_amt % 30 == 0) && recalibrate) {
-			blender = Blender::createDefault(Blender::MULTI_BAND, true);
-			if (!stitch_calib(x_maps, y_maps, compose_scale, blender, blend_width, full_img_size))
-			{
-				LOGLN("");
-				LOGLN("Calibration failed!");
-				return -1;
-			}
-			mb = dynamic_cast<MultiBandBlender*>(blender.get());
-		}
 		vector<Mat> input;
 		bool capped = getImages(CAPTURES, input);
 		if (!capped) {
 			break;
+		}
+		if (frame_amt && (frame_amt % 30 == 0) && recalibrate) {
+			blender = Blender::createDefault(Blender::MULTI_BAND, true);
+			//if (!stitch_calib(x_maps, y_maps, compose_scale, blender, blend_width, full_img_size))
+			//{
+			//	LOGLN("");
+			//	LOGLN("Calibration failed!");
+			//	return -1;
+			//}
+			//reWarp(input, cameras, blender, full_img_size, work_scale, seam_scale, warped_image_scale, seam_work_aspect, x_maps, y_maps, compose_scale, blend_width);
+			mb = dynamic_cast<MultiBandBlender*>(blender.get());
 		}
 
 		stitch_one(compose_scale, input, x_maps, y_maps, mb, results);
