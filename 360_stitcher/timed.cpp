@@ -37,7 +37,10 @@ using namespace cv::detail;
 
 std::mutex cout_mutex;
 
-int const NUM_IMAGES = 3;			//2		//6
+int skip_frames = 100;
+bool recalibrate = false;
+bool save_video = false;
+int const NUM_IMAGES = 2;			//2		//6
 int const INIT_FRAME_AMT = 1;
 int const INIT_SKIPS = 0;
 int const RECALIB_DEL = 3;
@@ -45,18 +48,16 @@ double const WORK_MEGAPIX = 0.6;	//0.6;	//-1			// Megapix parameter is scaled to
 double const SEAM_MEAGPIX = 0.01;							// of pixels in full image and this is used
 double const COMPOSE_MEGAPIX = 1.4;	//1.4;	//2.2;	//-1	// as a scaling factor when resizing images
 float const MATCH_CONF = 0.5f;
-float const CONF_THRESH = .5f;
+float const CONF_THRESH = .3f;
 int const BLEND_TYPE = Blender::MULTI_BAND;					// Feather blending leaves ugly seams
 float const BLEND_STRENGTH = 5;
-int const HESS_THRESH = 500;
+int const HESS_THRESH = 300;
 int const NOCTAVES = 4;
 int const NOCTAVESLAYERS = 2;
-int skip_frames = 40;
-bool recalibrate = false;
 
 // Test material before right videos are obtained from the camera rig
 vector<VideoCapture> CAPTURES;
-vector<String> video_files = {"videos/3.mp4", "videos/4.mp4", "videos/5.mp4"};
+vector<String> video_files = {"videos/l.mp4", "videos/r.mp4"/*, "videos/5.mp4"*/};
 
 // Print function for parallel threads - debugging
 void msg(String const message, double const value, int const thread_id)
@@ -551,12 +552,27 @@ void stitch_one(double compose_scale, vector<Mat> &imgs, vector<cuda::GpuMat> &x
 void consume(BlockingQueue<cuda::GpuMat> &results) {
 	cuda::GpuMat mat;
 	int i = 0;
+	VideoWriter outVideo;
+	if (save_video) {
+		outVideo.open("stitched.avi", VideoWriter::fourcc('M', 'J', 'P', 'G'), 30, Size(1920, 1080));
+		if (!outVideo.isOpened()) {
+			return;
+		}
+	}
 	while (1) {
 		Mat out;
 		Mat small;
 		mat = results.pop();
+		if (mat.empty()) {
+			if (save_video) {
+				outVideo.release();
+			}
+			return;
+		}
 		mat.download(out);
-		out.convertTo(small, CV_8U);
+		resize(out, small, Size(1920, 1080));
+		small.convertTo(small, CV_8U);
+		//outVideo << small;
 		imshow("Video", small);
 		waitKey(1);
 		if (!i) {
@@ -686,7 +702,6 @@ int main(int argc, char* argv[])
 	BlockingQueue<cuda::GpuMat> results;
 	int64 starttime = getTickCount();
 	std::thread consumer(consume, std::ref(results));
-	consumer.detach();
 	int frame_amt = 0;
 
 	// ONLINE STITCHING // ------------------------------------------------------------------------------------------------------
@@ -721,5 +736,9 @@ int main(int argc, char* argv[])
 	int64 end = getTickCount();
 	double delta = (end - starttime) / getTickFrequency() * 1000;
 	std::cout << "Time taken: " << delta / 1000 << " seconds. Avg fps: " << frame_amt / delta * 1000 << std::endl;
+	cuda::GpuMat matti;
+	bool sis = matti.empty();
+	results.push(matti);
+	consumer.join();
 	return 0;
 }
