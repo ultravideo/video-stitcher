@@ -40,7 +40,7 @@ std::mutex cout_mutex;
 int skip_frames = 100;
 bool recalibrate = false;
 bool save_video = false;
-int const NUM_IMAGES = 2;			//2		//6
+int const NUM_IMAGES = 6;			//2		//6
 int const INIT_FRAME_AMT = 1;
 int const INIT_SKIPS = 0;
 int const RECALIB_DEL = 3;
@@ -57,7 +57,7 @@ int const NOCTAVESLAYERS = 2;
 
 // Test material before right videos are obtained from the camera rig
 vector<VideoCapture> CAPTURES;
-vector<String> video_files = {"videos/l.mp4", "videos/r.mp4"/*, "videos/5.mp4"*/};
+vector<String> video_files = {"6cam/0.mp4", "6cam/1.mp4", "6cam/2.mp4", "6cam/3.mp4", "6cam/4.mp4", "6cam/5.mp4"};
 
 // Print function for parallel threads - debugging
 void msg(String const message, double const value, int const thread_id)
@@ -69,7 +69,6 @@ void msg(String const message, double const value, int const thread_id)
 void findFeatures(vector<vector<Mat>> &full_img, vector<ImageFeatures> &features,
 				  double &work_scale, double &seam_scale, double &seam_work_aspect) {
 	Ptr<FeaturesFinder> finder = makePtr<SurfFeaturesFinderGpu>(HESS_THRESH, NOCTAVES, NOCTAVESLAYERS);
-	SurfFeaturesFinderGpu* gpu_finder = dynamic_cast<SurfFeaturesFinderGpu*>(finder.get());
 	cuda::Stream stream;
 	Mat image;
 	// Read images from file and resize if necessary
@@ -105,7 +104,6 @@ void findFeatures(vector<vector<Mat>> &full_img, vector<ImageFeatures> &features
 				vconcat(features[i].descriptors, ft.descriptors, descriptors);
 				features[i].descriptors = descriptors;
 			}
-			//gpu_finder->find(gpu_images[i], features[i]);
 			features[i].img_idx = i;
 		}
 	}
@@ -121,7 +119,6 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
 		LOGLN("Homography estimation failed...");
 		return false;
 	}
-
 
 	// Convert rotation matrix into a type: 32-bit float
 #pragma omp parallel for
@@ -460,6 +457,9 @@ bool stitch_calib(vector<vector<Mat>> full_img, vector<CameraParams> &cameras, v
 	(*matcher)(features, pairwise_matches);
 	matcher->collectGarbage();
 
+	pairwise_matches[30] = MatchesInfo();
+	pairwise_matches[5] = MatchesInfo();
+
 	LOGLN("Matches: " << (getTickCount()-t)*1000/getTickFrequency());
 	t = getTickCount();
 	// STEP 2: estimating homographies // ---------------------------------------------------------------------------------------
@@ -570,14 +570,14 @@ void consume(BlockingQueue<cuda::GpuMat> &results) {
 			return;
 		}
 		mat.download(out);
+		if (!i) {
+			imwrite("calib.jpg", out);
+		}
 		resize(out, small, Size(1920, 1080));
 		small.convertTo(small, CV_8U);
 		//outVideo << small;
 		imshow("Video", small);
 		waitKey(1);
-		if (!i) {
-			imwrite("calib.jpg", small);
-		}
 		++i;
 	}
 }
