@@ -37,7 +37,7 @@ using namespace cv::detail;
 
 std::mutex cout_mutex;
 
-int skip_frames = 100;
+int skip_frames = 0;
 bool recalibrate = false;
 bool save_video = false;
 int const NUM_IMAGES = 6;			//2		//6
@@ -58,6 +58,8 @@ int const NOCTAVESLAYERS = 2;
 // Test material before right videos are obtained from the camera rig
 vector<VideoCapture> CAPTURES;
 vector<String> video_files = {"6cam/0.mp4", "6cam/1.mp4", "6cam/2.mp4", "6cam/3.mp4", "6cam/4.mp4", "6cam/5.mp4"};
+const int TIMES = 5;
+/*std::chrono::system_clock::time_point*/int64 times[TIMES];
 
 // Print function for parallel threads - debugging
 void msg(String const message, double const value, int const thread_id)
@@ -430,7 +432,7 @@ bool stitch_calib(vector<vector<Mat>> full_img, vector<CameraParams> &cameras, v
 	  float &blend_width, Size &full_img_size)
 {
 	// STEP 1: reading images, feature finding and matching // ------------------------------------------------------------------
-	int64 t = getTickCount();
+	times[0] = getTickCount();//std::chrono::system_clock::now();
 	vector<ImageFeatures> features(NUM_IMAGES);
 
 	for (int j = 0; j < full_img.size(); ++j) {
@@ -443,12 +445,9 @@ bool stitch_calib(vector<vector<Mat>> full_img, vector<CameraParams> &cameras, v
 		}
 	}
 	full_img_size = full_img[0][0].size();
-	LOGLN("Reading: " << (getTickCount()-t)*1000/getTickFrequency());
-	t = getTickCount();
 
 	findFeatures(full_img, features, work_scale, seam_scale, seam_work_aspect);
-	LOGLN("Find features: " << (getTickCount()-t)*1000/getTickFrequency());
-	t = getTickCount();
+	times[1] = getTickCount();// std::chrono::system_clock::now();
 
 	vector<MatchesInfo> pairwise_matches;
 	Ptr<FeaturesMatcher> matcher = makePtr<BestOf2NearestMatcher>(true, MATCH_CONF);
@@ -457,23 +456,20 @@ bool stitch_calib(vector<vector<Mat>> full_img, vector<CameraParams> &cameras, v
 	(*matcher)(features, pairwise_matches);
 	matcher->collectGarbage();
 
-	pairwise_matches[30] = MatchesInfo();
-	pairwise_matches[5] = MatchesInfo();
+	//pairwise_matches[30] = MatchesInfo();
+	//pairwise_matches[5] = MatchesInfo();
 
-	LOGLN("Matches: " << (getTickCount()-t)*1000/getTickFrequency());
-	t = getTickCount();
+	times[2] = getTickCount();//std::chrono::system_clock::now();
 	// STEP 2: estimating homographies // ---------------------------------------------------------------------------------------
 	if (!calibrateCameras(features, pairwise_matches, cameras, warped_image_scale)) {
 		return false;
 	}
 
-	LOGLN("Calibrate: " << (getTickCount()-t)*1000/getTickFrequency());
-	t = getTickCount();
+	times[3] = getTickCount();//std::chrono::system_clock::now();
 
 	warpImages(full_img[full_img.size()-1], full_img_size, cameras, blender, work_scale, seam_scale, seam_work_aspect,
 			   x_maps, y_maps, compose_scale, warped_image_scale, blend_width);
-	LOGLN("Warping: " << (getTickCount()-t)*1000/getTickFrequency());
-	t = getTickCount();
+	times[4] = getTickCount();//std::chrono::system_clock::now();
 	// WHAT HAPPEN TO THE FINAL PANORAMA? - writing to file is only here for debugging 
 	//cv::imwrite("calib.jpg", result);
 
@@ -482,34 +478,33 @@ bool stitch_calib(vector<vector<Mat>> full_img, vector<CameraParams> &cameras, v
 
 vector<cuda::GpuMat> full_imgs(NUM_IMAGES);
 vector<cuda::GpuMat> images(NUM_IMAGES);
-int printing = -1;
+int printing = 0;
 // Online stitching fuction, which resizes if necessary, remaps to 3D and uses the stripped version of feed function
 void stitch_online(double compose_scale, Mat &img, cuda::GpuMat &x_map, cuda::GpuMat &y_map, 
 							MultiBandBlender* mb, int thread_num)
 {
 	int img_num = thread_num % NUM_IMAGES;
+	if (img_num == printing) {
+		times[0] = getTickCount();//std::chrono::system_clock::now();
+	}
 	cuda::Stream stream;
 
-//	int64 t;
-//	int64 start = getTickCount();
 
 	// Upload to gpu memory
 	full_imgs[img_num].upload(img, stream);
 
-//	if (img_num == printing) {
-//		msg("uploading took (ms): ", (getTickCount() - start) / getTickFrequency() * 1000, img_num);
-//		t = getTickCount();
-//	}
+	if (img_num == printing) {
+		times[1] = getTickCount();//std::chrono::system_clock::now();
+	}
 
 	// Resize if necessary
 	if (abs(compose_scale - 1) > 1e-1)
 	{
 		cuda::resize(full_imgs[img_num], images[img_num], Size(), compose_scale, compose_scale, 1, stream);
 
-//		if (img_num == printing) {
-//			msg("resizing took (ms): ", (getTickCount() - t) / getTickFrequency() * 1000, img_num);
-//			t = getTickCount();
-//		}
+		if (img_num == printing) {
+			times[2] = getTickCount();//std::chrono::system_clock::now();
+		}
 
 		// Warp using existing maps
 		cuda::remap(images[img_num], images[img_num], x_map, y_map, INTER_LINEAR, BORDER_REFLECT, Scalar(), stream);
@@ -520,19 +515,16 @@ void stitch_online(double compose_scale, Mat &img, cuda::GpuMat &x_map, cuda::Gp
 		cuda::remap(full_imgs[img_num], images[img_num], x_map, y_map, INTER_LINEAR, BORDER_REFLECT, Scalar(), stream);
 	}
 	
-//	if (img_num == printing) {
-//		msg("remapping took (ms): ", (getTickCount() - t) / getTickFrequency() * 1000, img_num);
-//		t = getTickCount();
-//	}
+	if (img_num == printing) {
+		times[3] = getTickCount();//std::chrono::system_clock::now();
+	}
 	
 	// Calculate pyramids for blending
 	mb->feed_online(images[img_num], img_num, stream);
 
-//	if(img_num == printing)
-//		msg("pyramid calculation took (ms): ", (getTickCount() - t) / getTickFrequency() * 1000, img_num);
-	
-//	if(img_num == printing)
-//		msg("thread run (ms): ", (getTickCount() - start) / getTickFrequency() * 1000, img_num);
+	if (img_num == printing) {
+		times[4] = getTickCount();//std::chrono::system_clock::now();
+	}
 }
 
 void stitch_one(double compose_scale, vector<Mat> &imgs, vector<cuda::GpuMat> &x_maps, vector<cuda::GpuMat> &y_maps,
@@ -540,12 +532,19 @@ void stitch_one(double compose_scale, vector<Mat> &imgs, vector<cuda::GpuMat> &x
 	for (int i = 0; i < NUM_IMAGES; ++i) {
 		stitch_online(compose_scale, std::ref(imgs[i]), std::ref(x_maps[i]), std::ref(y_maps[i]), mb, i);
 	}
+	LOGLN("Frame:::::");
+	for (int i = 0; i < TIMES-1; ++i) {
+		//LOGLN("delta time: " << std::chrono::duration_cast<std::chrono::milliseconds>(times[i+1] - times[i]).count());
+		LOGLN("delta time: " << (times[i+1] - times[i]) * 1000 / getTickFrequency());
+	}
 	Mat result;
 	Mat result_mask;
 	cuda::GpuMat out;
-	int64 t = getTickCount();
+	times[0] = getTickCount();// std::chrono::system_clock::now();
 	mb->blend(result, result_mask, out, true);
-//	LOGLN("blending: " << (getTickCount()-t)/getTickFrequency()*1000);
+	times[1] = getTickCount();//std::chrono::system_clock::now();
+	//LOGLN("delta time: " << std::chrono::duration_cast<std::chrono::milliseconds>(times[1] - times[0]).count());
+	LOGLN("delta time: " << (times[1] - times[0]) * 1000 / getTickFrequency());
 	results.push(out);
 }
 
@@ -661,6 +660,10 @@ int main(int argc, char* argv[])
 		return -1;
 	}
 
+	for (int i = 0; i < TIMES-1; ++i) {
+		//LOGLN("delta time: " << std::chrono::duration_cast<std::chrono::milliseconds>(times[i+1] - times[i]).count());
+		LOGLN("delta time: " << (times[i+1] - times[i]) * 1000 / getTickFrequency());
+	}
 	LOGLN("Calibration done in: " << (getTickCount() - start) / getTickFrequency() * 1000 << " ms");
 	LOGLN("");
 	LOGLN("Proceeding to online process...");
