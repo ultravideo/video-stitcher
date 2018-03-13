@@ -37,10 +37,13 @@ using namespace cv::detail;
 
 std::mutex cout_mutex;
 
-int skip_frames = 0;
+std::string base = "dynamic";
+int skip_frames = 150;
 bool recalibrate = false;
 bool save_video = false;
-int const NUM_IMAGES = 6;			//2		//6
+int const NUM_IMAGES = 5;			//2		//6
+//int offsets[NUM_IMAGES] = {0, 37, 72, 72, 37}; // static
+int offsets[NUM_IMAGES] = {0, 0, 0, 0, 0}; // dynamic
 int const INIT_FRAME_AMT = 1;
 int const INIT_SKIPS = 0;
 int const RECALIB_DEL = 3;
@@ -57,7 +60,7 @@ int const NOCTAVESLAYERS = 2;
 
 // Test material before right videos are obtained from the camera rig
 vector<VideoCapture> CAPTURES;
-vector<String> video_files = {"6cam/0.mp4", "6cam/1.mp4", "6cam/2.mp4", "6cam/3.mp4", "6cam/4.mp4", "6cam/5.mp4"};
+vector<String> video_files = {base + "/0.mp4", base + "/1.mp4", base + "/2.mp4", base + "/3.mp4", base + "/4.mp4", base + "/5.mp4"};
 const int TIMES = 5;
 /*std::chrono::system_clock::time_point*/int64 times[TIMES];
 
@@ -614,7 +617,7 @@ int main(int argc, char* argv[])
 			LOGLN("ERROR: Unable to open videofile(s).");
 			return -1;
 		}
-		CAPTURES[i].set(CV_CAP_PROP_POS_FRAMES, skip_frames);
+		CAPTURES[i].set(CV_CAP_PROP_POS_FRAMES, skip_frames + offsets[i]);
 	}
 	// ------------------------------------------------------------------------
 
@@ -651,7 +654,7 @@ int main(int argc, char* argv[])
 		LOGLN("Calibration failed!");
 		return -1;
 	}
-	blender = Blender::createDefault(Blender::MULTI_BAND, true);
+	/*blender = Blender::createDefault(Blender::MULTI_BAND, true);
 	int64 start = getTickCount();
 	if (!stitch_calib(full_img, cameras, x_maps, y_maps, work_scale, seam_scale, seam_work_aspect, compose_scale, blender, warped_image_scale, blend_width, full_img_size))
 	{
@@ -668,7 +671,7 @@ int main(int argc, char* argv[])
 	LOGLN("");
 	LOGLN("Proceeding to online process...");
 	LOGLN("");
-
+	*/
 	MultiBandBlender* mb = dynamic_cast<MultiBandBlender*>(blender.get());
 
 	// Temporary way to acquire images ----------------------------------------
