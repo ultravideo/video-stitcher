@@ -27,8 +27,10 @@
 #include <mutex>
 #include <iomanip>
 #include <vector>
+#include <limits>
 
 #define LOGLN(msg) std::cout << msg << std::endl
+#define PI 3.1415926535897932384626
 
 using std::vector;
 
@@ -37,13 +39,14 @@ using namespace cv::detail;
 
 std::mutex cout_mutex;
 
-std::string base = "dynamic";
-int skip_frames = 150;
+std::string base = "static";
+int skip_frames = 220;
+bool wrapAround = false;
 bool recalibrate = false;
 bool save_video = false;
-int const NUM_IMAGES = 5;			//2		//6
-//int offsets[NUM_IMAGES] = {0, 37, 72, 72, 37}; // static
-int offsets[NUM_IMAGES] = {0, 0, 0, 0, 0}; // dynamic
+int const NUM_IMAGES = 5;
+int offsets[NUM_IMAGES] = {0, 37, 72, 72, 37}; // static
+//int offsets[NUM_IMAGES] = {0, 0, 0, 0, 0, 0}; // dynamic
 int const INIT_FRAME_AMT = 1;
 int const INIT_SKIPS = 0;
 int const RECALIB_DEL = 3;
@@ -51,7 +54,7 @@ double const WORK_MEGAPIX = 0.6;	//0.6;	//-1			// Megapix parameter is scaled to
 double const SEAM_MEAGPIX = 0.01;							// of pixels in full image and this is used
 double const COMPOSE_MEGAPIX = 1.4;	//1.4;	//2.2;	//-1	// as a scaling factor when resizing images
 float const MATCH_CONF = 0.5f;
-float const CONF_THRESH = .3f;
+float const CONF_THRESH = 0.5f;
 int const BLEND_TYPE = Blender::MULTI_BAND;					// Feather blending leaves ugly seams
 float const BLEND_STRENGTH = 5;
 int const HESS_THRESH = 300;
@@ -116,7 +119,7 @@ void findFeatures(vector<vector<Mat>> &full_img, vector<ImageFeatures> &features
 }
 
 bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pairwise_matches, vector<CameraParams> &cameras, float &warped_image_scale) {
-	Ptr<Estimator> estimator = makePtr<HomographyBasedEstimator>();
+	/*Ptr<Estimator> estimator = makePtr<HomographyBasedEstimator>();
 
 	// Rough estimation of the homographies
 	if (!(*estimator)(features, pairwise_matches, cameras))
@@ -188,15 +191,118 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
 	for (int i = 0; i < cameras.size(); i++)
 	{
 		cameras[i].R = rmats[i];
+	}*/
+	cameras = vector<CameraParams>(NUM_IMAGES);
+	//estimateFocal(features, pairwise_matches, focals);
+	warped_image_scale = 503;
+	for (int i = 0; i < cameras.size(); ++i) {
+		double rot = 2 * PI * i / 6;
+		Mat rotMat(3, 3, CV_32F);
+		double L[3] = {cos(rot), 0, sin(rot)};
+		double u[3] = {0, 1, 0};
+		double s[3] = {L[1]*u[2] - L[2]*u[1], L[2]*u[0] - L[0]*u[2], L[0]*u[1] - L[1]*u[0]};
+		double y[3] = {s[1]*L[2] - s[2]*L[1], s[2]*L[0] - s[0]*L[2], s[0]*L[1] - s[1]*L[0]};
+		rotMat.at<float>(0, 0) = s[0];
+		rotMat.at<float>(0, 1) = s[1];
+		rotMat.at<float>(0, 2) = s[2];
+		rotMat.at<float>(1, 0) = y[0];
+		rotMat.at<float>(1, 1) = y[1];
+		rotMat.at<float>(1, 2) = y[2];
+		rotMat.at<float>(2, 0) = -L[0];
+		rotMat.at<float>(2, 1) = -L[1];
+		rotMat.at<float>(2, 2) = -L[2];
+		cameras[i].R = rotMat;
+		cameras[i].ppx = features[i].img_size.width / 2;
+		cameras[i].ppy = features[i].img_size.height / 2;
+	}
+	
+	int points = 10;
+	int skips = 0;
+	vector<float> focals;
+	for (int idx = 0; idx < pairwise_matches.size(); ++idx) {
+		MatchesInfo &pw_matches = pairwise_matches[idx];
+		int i = pw_matches.src_img_idx;
+		int j = pw_matches.dst_img_idx;
+		if (i >= j || pw_matches.confidence < CONF_THRESH) {
+			++skips;
+			continue;
+		}
+		int matches = pw_matches.matches.size();
+		if (!matches) {
+			++skips;
+			continue;
+		}
+		for (int k = 0; k < points; ++k) {
+			int match_idx = rand() % matches;
+			int idx1 = pw_matches.matches[match_idx].queryIdx;
+			int idx2 = pw_matches.matches[match_idx].trainIdx;
+			KeyPoint k1 = features[i].keypoints[idx1];
+			KeyPoint k2 = features[j].keypoints[idx2];
+			float x1 = k1.pt.x - features[i].img_size.width / 2;
+			float y1 = k1.pt.y - features[i].img_size.height / 2;
+			float x2 = k2.pt.x - features[j].img_size.width / 2;
+			float y2 = k2.pt.y - features[j].img_size.height / 2;
+			float best_f;
+			float best_err = std::numeric_limits<float>::max();
+			float err;
+			float f = 500;
+			float delta = 10;
+			float decay = 0.99;
+			float err_thresh = 1;
+			while (1) {
+				f += delta;
+				float x1_ = f * atan(x1 / f);
+				float theta = j - i;
+				if (i == 0 && j == NUM_IMAGES - 1 && wrapAround) {
+					theta = -1;
+				}
+				theta *= 2 * PI / 6;
+				float x2_ = f * (theta + atan(x2 / f));
+				float y1_ = f * y1 / sqrt(x1*x1 + f*f);
+				float y2_ = f * y2 / sqrt(x2*x2 + f*f);
+				err = sqrt((x1_ - x2_)*(x1_ - x2_) + (y1_ - y2_)*(y1_ - y2_));
+				if (err < best_err) {
+					best_f = f;
+					best_err = err;
+				}
+				else {
+					f = best_f;
+					delta *= -1;
+				}
+				if (err < err_thresh || abs(delta) < 0.1) {
+					break;
+				}
+				delta *= decay;
+			}
+			float dist = pw_matches.matches[match_idx].distance;
+			focals.push_back(best_f);
+		}
+	}
+	
+	std::sort(focals.begin(), focals.end());
+
+	if (focals.size() % 2 == 1)
+	{
+		warped_image_scale = (focals[focals.size() / 2]);
+	}
+	else
+	{
+		warped_image_scale = (focals[focals.size() / 2 - 1] + focals[focals.size() / 2]) * 0.5f;
+	}
+
+	warped_image_scale *= 1.00;
+	
+	for (int i = 0; i < cameras.size(); ++i) {
+		cameras[i].focal = warped_image_scale;
 	}
 	return true;
 }
 
-
+// Precalculates warp maps for images so only precalculated maps are used to warp online
 void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> cameras, Ptr<Blender> blender, double work_scale,
 				double seam_scale, double seam_work_aspect, vector<cuda::GpuMat> &x_maps, vector<cuda::GpuMat> &y_maps, double &compose_scale,
 				float &warped_image_scale,  float &blend_width) {
-	int64 t = getTickCount();
+	//int64 t = getTickCount();
 	// STEP 3: warping images // ------------------------------------------------------------------------------------------------
 
 	cuda::Stream stream;
@@ -221,9 +327,9 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 		gpu_masks[i].setTo(Scalar::all(255), stream);
 	}
 
-	Ptr<WarperCreator> warper_creator = makePtr<cv::SphericalWarperGpu>();
+	Ptr<WarperCreator> warper_creator = makePtr<cv::CylindricalWarperGpu>();
 	Ptr<RotationWarper> warper = warper_creator->create(static_cast<float>(warped_image_scale * seam_work_aspect));
-	cv::detail::SphericalWarperGpu* gpu_warper = dynamic_cast<cv::detail::SphericalWarperGpu*>(warper.get());
+	cv::detail::CylindricalWarperGpu* gpu_warper = dynamic_cast<cv::detail::CylindricalWarperGpu*>(warper.get());
 
 	vector<UMat> images_warped_f(NUM_IMAGES);
 	vector<Point> corners(NUM_IMAGES);
@@ -254,11 +360,11 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 		gpu_seam_imgs_warped[i].download(images_warped_f[i], stream);
 	}
 
-	LOGLN("Warping: " << (getTickCount() - t) * 1000 / getTickFrequency());
-	t = getTickCount();
+	//LOGLN("Warping: " << (getTickCount() - t) * 1000 / getTickFrequency());
+	//t = getTickCount();
 	// STEP 4: compensating exposure and finding seams // -----------------------------------------------------------------------
 
-	Ptr<ExposureCompensator> compensator = ExposureCompensator::createDefault(ExposureCompensator::GAIN);
+	Ptr<ExposureCompensator> compensator = ExposureCompensator::createDefault(ExposureCompensator::GAIN_BLOCKS);
 	compensator->feed(corners, images_warped, masks_warped);
 	cv::detail::GainCompensator* gain_comp = dynamic_cast<cv::detail::GainCompensator*>(compensator.get());
 
@@ -270,8 +376,8 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 	images_warped.clear();
 	images_warped_f.clear();
 	masks.clear();
-	LOGLN("Find seams: " << (getTickCount() - t) * 1000 / getTickFrequency());
-	t = getTickCount();
+	//LOGLN("Find seams: " << (getTickCount() - t) * 1000 / getTickFrequency());
+	//t = getTickCount();
 
 	//  STEP 5: composing panorama // -------------------------------------------------------------------------------------------
 
@@ -288,7 +394,7 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 
 	// Update warped image scale
 	warper = warper_creator->create(warped_image_scale * static_cast<float>(compose_work_aspect));
-	gpu_warper = dynamic_cast<cv::detail::SphericalWarperGpu*>(warper.get());
+	gpu_warper = dynamic_cast<cv::detail::CylindricalWarperGpu*>(warper.get());
 
 
 	Size sz = full_img_size;
@@ -335,11 +441,11 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 
 	blender->prepare(corners, sizes);
 
-	LOGLN("Prepare: " << (getTickCount() - t) * 1000 / getTickFrequency());
-	t = getTickCount();
+	//LOGLN("Prepare: " << (getTickCount() - t) * 1000 / getTickFrequency());
+	//t = getTickCount();
 
 
-	t = getTickCount();
+	//t = getTickCount();
 	MultiBandBlender* mb = dynamic_cast<MultiBandBlender*>(blender.get());
 	int64 start = getTickCount();
 	Size img_size;
@@ -353,8 +459,8 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 	{
 		gpu_img.upload(full_img[img_idx], stream);
 		//gpu_masks_warped[img_idx].upload(masks_warped[img_idx], stream);
-		LOGLN(img_idx << "--Upload image and mask: " << (getTickCount() - t) * 1000 / getTickFrequency());
-		t = getTickCount();
+		//LOGLN(img_idx << "--Upload image and mask: " << (getTickCount() - t) * 1000 / getTickFrequency());
+		//t = getTickCount();
 		if (abs(compose_scale - 1) > 1e-1)
 		{
 			cuda::resize(gpu_img, gpu_img, Size(), compose_scale, compose_scale, 1);
@@ -363,8 +469,8 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 		{
 			gpu_img.convertTo(gpu_img, gpu_img.type());
 		}
-		LOGLN(img_idx << "--Resize in feed: " << (getTickCount() - t) * 1000 / getTickFrequency());
-		t = getTickCount();
+		//LOGLN(img_idx << "--Resize in feed: " << (getTickCount() - t) * 1000 / getTickFrequency());
+		//t = getTickCount();
 
 		full_img[img_idx].release();
 
@@ -373,32 +479,32 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 		Mat K;
 		cameras[img_idx].K().convertTo(K, CV_32F);
 
-		LOGLN(img_idx << "--Convert in feed: " << (getTickCount() - t) * 1000 / getTickFrequency());
-		t = getTickCount();
+		//LOGLN(img_idx << "--Convert in feed: " << (getTickCount() - t) * 1000 / getTickFrequency());
+		//t = getTickCount();
 		// Warp the current image
 		gpu_warper->warp(gpu_img, K, cameras[img_idx].R, INTER_LINEAR, BORDER_REFLECT, gpu_img);
 
-		LOGLN(img_idx << "--Warping in feed: " << (getTickCount() - t) * 1000 / getTickFrequency());
-		t = getTickCount();
+		//LOGLN(img_idx << "--Warping in feed: " << (getTickCount() - t) * 1000 / getTickFrequency());
+		//t = getTickCount();
 
 		// Create warping map for online process
 		gpu_warper->buildMaps(img_size, K, cameras[img_idx].R, x_maps[img_idx], y_maps[img_idx]);
-		LOGLN(img_idx << "--Build maps: " << (getTickCount() - t) * 1000 / getTickFrequency());
-		t = getTickCount();
+		//LOGLN(img_idx << "--Build maps: " << (getTickCount() - t) * 1000 / getTickFrequency());
+		//t = getTickCount();
 
 		// Warp the current image mask
 		gpu_mask.create(img_size, CV_8U);
 		gpu_mask.setTo(Scalar::all(255));
 
 		gpu_warper->warp(gpu_mask, K, cameras[img_idx].R, INTER_NEAREST, BORDER_CONSTANT, gpu_mask_warped);
-		LOGLN(img_idx << "--Warp mask in feed: " << (getTickCount() - t) * 1000 / getTickFrequency());
-		t = getTickCount();
+		//LOGLN(img_idx << "--Warp mask in feed: " << (getTickCount() - t) * 1000 / getTickFrequency());
+		//t = getTickCount();
 
 		// Apply exposure compensation
 		gain_comp->apply_gpu(img_idx, corners[img_idx], gpu_img, gpu_mask_warped);
 
-		LOGLN(img_idx << "--Apply compensator: " << (getTickCount() - t) * 1000 / getTickFrequency());
-		t = getTickCount();
+		//LOGLN(img_idx << "--Apply compensator: " << (getTickCount() - t) * 1000 / getTickFrequency());
+		//t = getTickCount();
 		gpu_img.convertTo(gpu_img, CV_16S, stream);
 
 		gpu_masks_warped[img_idx].upload(masks_warped[img_idx]);
@@ -406,16 +512,16 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 		dilation_filter->apply(gpu_masks_warped[img_idx], gpu_seam_mask);
 		cuda::resize(gpu_seam_mask, gpu_seam_mask, gpu_mask_warped.size(), 0.0, 0.0, 1);
 		cuda::bitwise_and(gpu_seam_mask, gpu_mask_warped, gpu_mask_warped, noArray());
-		LOGLN(img_idx << "--Rando stuff: " << (getTickCount() - t) * 1000 / getTickFrequency());
-		t = getTickCount();
+		//LOGLN(img_idx << "--Rando stuff: " << (getTickCount() - t) * 1000 / getTickFrequency());
+		//t = getTickCount();
 
 		// Blend the current image
 		mb->init_gpu(gpu_img, gpu_mask_warped, corners[img_idx]);
-		LOGLN(img_idx << "--Feed images: " << (getTickCount() - t) * 1000 / getTickFrequency());
-		t = getTickCount();
+		//LOGLN(img_idx << "--Feed images: " << (getTickCount() - t) * 1000 / getTickFrequency());
+		//t = getTickCount();
 	}
-	LOGLN("Feed images: " << (getTickCount() - start) * 1000 / getTickFrequency());
-	t = getTickCount();
+	//LOGLN("Feed images: " << (getTickCount() - start) * 1000 / getTickFrequency());
+	//t = getTickCount();
 
 
 	Mat result;
@@ -423,8 +529,8 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 
 	blender->blend(result, result_mask);
 
-	LOGLN("Blend pano: " << (getTickCount() - t) * 1000 / getTickFrequency());
-	t = getTickCount();
+	//LOGLN("Blend pano: " << (getTickCount() - t) * 1000 / getTickFrequency());
+	//t = getTickCount();
 }
 
 
@@ -452,15 +558,20 @@ bool stitch_calib(vector<vector<Mat>> full_img, vector<CameraParams> &cameras, v
 	findFeatures(full_img, features, work_scale, seam_scale, seam_work_aspect);
 	times[1] = getTickCount();// std::chrono::system_clock::now();
 
-	vector<MatchesInfo> pairwise_matches;
-	Ptr<FeaturesMatcher> matcher = makePtr<BestOf2NearestMatcher>(true, MATCH_CONF);
+	vector<MatchesInfo> pairwise_matches(NUM_IMAGES -1 + (int)wrapAround);
+	Ptr<BestOf2NearestMatcher> matcher = makePtr<BestOf2NearestMatcher>(true, MATCH_CONF);
 
 	// Match features
-	(*matcher)(features, pairwise_matches);
+	for (int i = 0; i < pairwise_matches.size(); ++i) {
+		int idx1 = (i + 1 == NUM_IMAGES) ? i-1 : i;
+		int idx2 = (i + 1 == NUM_IMAGES) ? 0 : i+1;
+		ImageFeatures f1 = features[idx1];
+		ImageFeatures f2 = features[idx2];
+		matcher->match(f1, f2, pairwise_matches[i]);
+		pairwise_matches[i].src_img_idx = idx1;
+		pairwise_matches[i].dst_img_idx = idx2;
+	}
 	matcher->collectGarbage();
-
-	//pairwise_matches[30] = MatchesInfo();
-	//pairwise_matches[5] = MatchesInfo();
 
 	times[2] = getTickCount();//std::chrono::system_clock::now();
 	// STEP 2: estimating homographies // ---------------------------------------------------------------------------------------
@@ -473,9 +584,6 @@ bool stitch_calib(vector<vector<Mat>> full_img, vector<CameraParams> &cameras, v
 	warpImages(full_img[full_img.size()-1], full_img_size, cameras, blender, work_scale, seam_scale, seam_work_aspect,
 			   x_maps, y_maps, compose_scale, warped_image_scale, blend_width);
 	times[4] = getTickCount();//std::chrono::system_clock::now();
-	// WHAT HAPPEN TO THE FINAL PANORAMA? - writing to file is only here for debugging 
-	//cv::imwrite("calib.jpg", result);
-
 	return true;
 }
 
@@ -654,7 +762,7 @@ int main(int argc, char* argv[])
 		LOGLN("Calibration failed!");
 		return -1;
 	}
-	/*blender = Blender::createDefault(Blender::MULTI_BAND, true);
+	blender = Blender::createDefault(Blender::MULTI_BAND, true);
 	int64 start = getTickCount();
 	if (!stitch_calib(full_img, cameras, x_maps, y_maps, work_scale, seam_scale, seam_work_aspect, compose_scale, blender, warped_image_scale, blend_width, full_img_size))
 	{
@@ -671,7 +779,7 @@ int main(int argc, char* argv[])
 	LOGLN("");
 	LOGLN("Proceeding to online process...");
 	LOGLN("");
-	*/
+	
 	MultiBandBlender* mb = dynamic_cast<MultiBandBlender*>(blender.get());
 
 	// Temporary way to acquire images ----------------------------------------
@@ -723,14 +831,14 @@ int main(int argc, char* argv[])
 			blender = Blender::createDefault(Blender::MULTI_BAND, true);
 			//x_maps = vector<cuda::GpuMat>(NUM_IMAGES);
 			//y_maps = vector<cuda::GpuMat>(NUM_IMAGES);
-			warpImages(input, full_img_size, cameras, blender, work_scale, seam_scale, seam_work_aspect, x_maps, y_maps,
-					   compose_scale, warped_image_scale, blend_width);
-			//if (!stitch_calib(input, x_maps, y_maps, compose_scale, blender, blend_width, full_img_size))
-			//{
-			//	LOGLN("");
-			//	LOGLN("Calibration failed!");
-			//	return -1;
-			//}
+			//warpImages(input, full_img_size, cameras, blender, work_scale, seam_scale, seam_work_aspect, x_maps, y_maps,
+			//		   compose_scale, warped_image_scale, blend_width);
+			if (!stitch_calib(full_img, cameras, x_maps, y_maps, work_scale, seam_scale, seam_work_aspect, compose_scale, blender, warped_image_scale, blend_width, full_img_size))
+			{
+				LOGLN("");
+				LOGLN("Calibration failed!");
+				return -1;
+			}
 			mb = dynamic_cast<MultiBandBlender*>(blender.get());
 			LOGLN("Rewarp: " << (getTickCount()-t)*1000/getTickFrequency());
 		}
