@@ -21,6 +21,7 @@
 #include "opencv2/cudafilters.hpp"
 #include "opencv2/cudaimgproc.hpp"
 #include "opencv2/cudaarithm.hpp"
+#include "opencv2/cudafeatures2d.hpp"
 
 #include <fstream>
 #include <thread>
@@ -299,7 +300,7 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
 }
 
 // Precalculates warp maps for images so only precalculated maps are used to warp online
-void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> cameras, Ptr<Blender> blender, double work_scale,
+void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> cameras, Ptr<Blender> blender, Ptr<ExposureCompensator> compensator, double work_scale,
 				double seam_scale, double seam_work_aspect, vector<cuda::GpuMat> &x_maps, vector<cuda::GpuMat> &y_maps, double &compose_scale,
 				float &warped_image_scale,  float &blend_width) {
 	//int64 t = getTickCount();
@@ -364,9 +365,8 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 	//t = getTickCount();
 	// STEP 4: compensating exposure and finding seams // -----------------------------------------------------------------------
 
-	Ptr<ExposureCompensator> compensator = ExposureCompensator::createDefault(ExposureCompensator::GAIN_BLOCKS);
 	compensator->feed(corners, images_warped, masks_warped);
-	cv::detail::GainCompensator* gain_comp = dynamic_cast<cv::detail::GainCompensator*>(compensator.get());
+	GainCompensator* gain_comp = dynamic_cast<GainCompensator*>(compensator.get());
 
 	Ptr<SeamFinder> seam_finder = makePtr<VoronoiSeamFinder>();
 	seam_finder->find(images_warped_f, corners, masks_warped);
@@ -395,7 +395,6 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 	// Update warped image scale
 	warper = warper_creator->create(warped_image_scale * static_cast<float>(compose_work_aspect));
 	gpu_warper = dynamic_cast<cv::detail::CylindricalWarperGpu*>(warper.get());
-
 
 	Size sz = full_img_size;
 
@@ -537,7 +536,7 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
   // Takes in maps for 3D remapping, compose scale for sizing final panorama, blender and image size.
   // Returns true if all the phases of calibration are successful.
 bool stitch_calib(vector<vector<Mat>> full_img, vector<CameraParams> &cameras, vector<cuda::GpuMat> &x_maps, vector<cuda::GpuMat> &y_maps, double &work_scale,
-	double &seam_scale, double &seam_work_aspect, double &compose_scale, Ptr<Blender> &blender, float &warped_image_scale,
+	double &seam_scale, double &seam_work_aspect, double &compose_scale, Ptr<Blender> &blender, Ptr<ExposureCompensator> compensator, float &warped_image_scale,
 	  float &blend_width, Size &full_img_size)
 {
 	// STEP 1: reading images, feature finding and matching // ------------------------------------------------------------------
@@ -571,7 +570,7 @@ bool stitch_calib(vector<vector<Mat>> full_img, vector<CameraParams> &cameras, v
 		pairwise_matches[i].src_img_idx = idx1;
 		pairwise_matches[i].dst_img_idx = idx2;
 	}
-	matcher->collectGarbage();
+	//matcher->collectGarbage();
 
 	times[2] = getTickCount();//std::chrono::system_clock::now();
 	// STEP 2: estimating homographies // ---------------------------------------------------------------------------------------
@@ -581,7 +580,7 @@ bool stitch_calib(vector<vector<Mat>> full_img, vector<CameraParams> &cameras, v
 
 	times[3] = getTickCount();//std::chrono::system_clock::now();
 
-	warpImages(full_img[full_img.size()-1], full_img_size, cameras, blender, work_scale, seam_scale, seam_work_aspect,
+	warpImages(full_img[full_img.size()-1], full_img_size, cameras, blender, compensator, work_scale, seam_scale, seam_work_aspect,
 			   x_maps, y_maps, compose_scale, warped_image_scale, blend_width);
 	times[4] = getTickCount();//std::chrono::system_clock::now();
 	return true;
@@ -592,7 +591,7 @@ vector<cuda::GpuMat> images(NUM_IMAGES);
 int printing = 0;
 // Online stitching fuction, which resizes if necessary, remaps to 3D and uses the stripped version of feed function
 void stitch_online(double compose_scale, Mat &img, cuda::GpuMat &x_map, cuda::GpuMat &y_map, 
-							MultiBandBlender* mb, int thread_num)
+							MultiBandBlender* mb, GainCompensator* gc, int thread_num)
 {
 	int img_num = thread_num % NUM_IMAGES;
 	if (img_num == printing) {
@@ -625,6 +624,7 @@ void stitch_online(double compose_scale, Mat &img, cuda::GpuMat &x_map, cuda::Gp
 		// Warp using existing maps
 		cuda::remap(full_imgs[img_num], images[img_num], x_map, y_map, INTER_LINEAR, BORDER_REFLECT, Scalar(), stream);
 	}
+	gc->apply_gpu(img_num, Point(), images[img_num], cuda::GpuMat());
 	
 	if (img_num == printing) {
 		times[3] = getTickCount();//std::chrono::system_clock::now();
@@ -639,9 +639,9 @@ void stitch_online(double compose_scale, Mat &img, cuda::GpuMat &x_map, cuda::Gp
 }
 
 void stitch_one(double compose_scale, vector<Mat> &imgs, vector<cuda::GpuMat> &x_maps, vector<cuda::GpuMat> &y_maps,
-				MultiBandBlender* mb, BlockingQueue<cuda::GpuMat> &results) {
+				MultiBandBlender* mb, GainCompensator* gc, BlockingQueue<cuda::GpuMat> &results) {
 	for (int i = 0; i < NUM_IMAGES; ++i) {
-		stitch_online(compose_scale, std::ref(imgs[i]), std::ref(x_maps[i]), std::ref(y_maps[i]), mb, i);
+		stitch_online(compose_scale, std::ref(imgs[i]), std::ref(x_maps[i]), std::ref(y_maps[i]), mb, gc, i);
 	}
 	LOGLN("Frame:::::");
 	for (int i = 0; i < TIMES-1; ++i) {
@@ -745,6 +745,7 @@ int main(int argc, char* argv[])
 	cuda::setDevice(0);
 
 	Ptr<Blender> blender = Blender::createDefault(Blender::MULTI_BAND, true);
+	Ptr<ExposureCompensator> compensator = ExposureCompensator::createDefault(ExposureCompensator::GAIN);
 	vector<Point> corners(NUM_IMAGES);
 	vector<Size> sizes(NUM_IMAGES);
 	vector<CameraParams> cameras;
@@ -756,7 +757,7 @@ int main(int argc, char* argv[])
 		}
 	}
 	//if (!stitch_calib(x_maps, y_maps, compose_scale, blender, blend_width, full_img_size, corners, sizes))
-	if (!stitch_calib(full_img, cameras, x_maps, y_maps, work_scale, seam_scale, seam_work_aspect, compose_scale, blender, warped_image_scale, blend_width, full_img_size))
+	if (!stitch_calib(full_img, cameras, x_maps, y_maps, work_scale, seam_scale, seam_work_aspect, compose_scale, blender, compensator, warped_image_scale, blend_width, full_img_size))
 	{
 		LOGLN("");
 		LOGLN("Calibration failed!");
@@ -764,7 +765,7 @@ int main(int argc, char* argv[])
 	}
 	blender = Blender::createDefault(Blender::MULTI_BAND, true);
 	int64 start = getTickCount();
-	if (!stitch_calib(full_img, cameras, x_maps, y_maps, work_scale, seam_scale, seam_work_aspect, compose_scale, blender, warped_image_scale, blend_width, full_img_size))
+	if (!stitch_calib(full_img, cameras, x_maps, y_maps, work_scale, seam_scale, seam_work_aspect, compose_scale, blender, compensator, warped_image_scale, blend_width, full_img_size))
 	{
 		LOGLN("");
 		LOGLN("Calibration failed!");
@@ -781,6 +782,7 @@ int main(int argc, char* argv[])
 	LOGLN("");
 	
 	MultiBandBlender* mb = dynamic_cast<MultiBandBlender*>(blender.get());
+	GainCompensator* gc = dynamic_cast<GainCompensator*>(compensator.get());
 
 	// Temporary way to acquire images ----------------------------------------
 	// Has to be adjusted manually
@@ -833,7 +835,7 @@ int main(int argc, char* argv[])
 			//y_maps = vector<cuda::GpuMat>(NUM_IMAGES);
 			//warpImages(input, full_img_size, cameras, blender, work_scale, seam_scale, seam_work_aspect, x_maps, y_maps,
 			//		   compose_scale, warped_image_scale, blend_width);
-			if (!stitch_calib(full_img, cameras, x_maps, y_maps, work_scale, seam_scale, seam_work_aspect, compose_scale, blender, warped_image_scale, blend_width, full_img_size))
+			if (!stitch_calib(full_img, cameras, x_maps, y_maps, work_scale, seam_scale, seam_work_aspect, compose_scale, blender, compensator, warped_image_scale, blend_width, full_img_size))
 			{
 				LOGLN("");
 				LOGLN("Calibration failed!");
@@ -843,7 +845,7 @@ int main(int argc, char* argv[])
 			LOGLN("Rewarp: " << (getTickCount()-t)*1000/getTickFrequency());
 		}
 
-		stitch_one(compose_scale, input, x_maps, y_maps, mb, results);
+		stitch_one(compose_scale, input, x_maps, y_maps, mb, gc, results);
 		++frame_amt;
 	}
 
