@@ -40,14 +40,14 @@ using namespace cv::detail;
 
 std::mutex cout_mutex;
 
-std::string base = "static";
-int skip_frames = 220;
+std::string base = "6cam";
+int skip_frames = 0;
 bool wrapAround = false;
 bool recalibrate = false;
 bool save_video = false;
-int const NUM_IMAGES = 5;
-int offsets[NUM_IMAGES] = {0, 37, 72, 72, 37}; // static
-//int offsets[NUM_IMAGES] = {0, 0, 0, 0, 0, 0}; // dynamic
+int const NUM_IMAGES = 6;
+//int offsets[NUM_IMAGES] = {0, 37, 72, 72, 37}; // static
+int offsets[NUM_IMAGES] = {0, 0, 0, 0, 0, 0}; // dynamic
 int const INIT_FRAME_AMT = 1;
 int const INIT_SKIPS = 0;
 int const RECALIB_DEL = 3;
@@ -77,9 +77,11 @@ void msg(String const message, double const value, int const thread_id)
 }
 void findFeatures(vector<vector<Mat>> &full_img, vector<ImageFeatures> &features,
 				  double &work_scale, double &seam_scale, double &seam_work_aspect) {
-	Ptr<FeaturesFinder> finder = makePtr<SurfFeaturesFinderGpu>(HESS_THRESH, NOCTAVES, NOCTAVESLAYERS);
-	cuda::Stream stream;
+	times[0] = getTickCount();//std::chrono::system_clock::now();
+	Ptr<cuda::ORB> d_orb = cuda::ORB::create();
 	Mat image;
+	cuda::GpuMat gpu_img;
+	cuda::GpuMat descriptors;
 	// Read images from file and resize if necessary
 	for (int i = 0; i < NUM_IMAGES; i++) {
 		for (int j = 0; j < INIT_FRAME_AMT; ++j) {
@@ -100,99 +102,28 @@ void findFeatures(vector<vector<Mat>> &full_img, vector<ImageFeatures> &features
 			seam_scale = min(1.0, sqrt(SEAM_MEAGPIX * 1e6 / full_img[j][i].size().area()));
 			seam_work_aspect = seam_scale / work_scale;
 
-			int64 t = getTickCount();
+			gpu_img.upload(image);
+			cuda::cvtColor(gpu_img, gpu_img, CV_BGR2GRAY);
 			// Find features with SURF feature finder
 			if (!j) {
-				(*finder)(image, features[i]);
-			}
-			else {
+				features[i].img_size = image.size();
+				d_orb->detectAndCompute(gpu_img, noArray(), features[i].keypoints, descriptors);
+				descriptors.download(features[i].descriptors);
+			} else {
 				ImageFeatures ft;
-				UMat descriptors;
-				(*finder)(image, ft);
+				UMat cpu_descriptors;
+				d_orb->detectAndCompute(gpu_img, noArray(), ft.keypoints, descriptors);
+				descriptors.download(ft.descriptors);
 				features[i].keypoints.insert(features[i].keypoints.end(), ft.keypoints.begin(), ft.keypoints.end());
-				vconcat(features[i].descriptors, ft.descriptors, descriptors);
-				features[i].descriptors = descriptors;
+				vconcat(features[i].descriptors, ft.descriptors, cpu_descriptors);
+				features[i].descriptors = cpu_descriptors;
 			}
 			features[i].img_idx = i;
 		}
 	}
-	finder->collectGarbage();
 }
 
 bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pairwise_matches, vector<CameraParams> &cameras, float &warped_image_scale) {
-	/*Ptr<Estimator> estimator = makePtr<HomographyBasedEstimator>();
-
-	// Rough estimation of the homographies
-	if (!(*estimator)(features, pairwise_matches, cameras))
-	{
-		LOGLN("Homography estimation failed...");
-		return false;
-	}
-
-	// Convert rotation matrix into a type: 32-bit float
-#pragma omp parallel for
-	for (int i = 0; i < cameras.size(); i++)
-	{
-		Mat R;
-		cameras[i].R.convertTo(R, CV_32F);
-		cameras[i].R = R;
-	}
-
-	Ptr<BundleAdjusterBase> adjuster = makePtr<BundleAdjusterRay>();
-	Mat_<uchar> refine_mask = Mat::zeros(3, 3, CV_8U);
-	refine_mask(0, 0) = 1;
-	refine_mask(0, 1) = 1;
-	refine_mask(0, 2) = 1;
-	refine_mask(1, 1) = 1;
-	refine_mask(1, 2) = 1;
-
-	adjuster->setConfThresh(CONF_THRESH);
-	adjuster->setRefinementMask(refine_mask);
-
-	// Calculate final estimation of the homographies
-	if (!(*adjuster)(features, pairwise_matches, cameras))
-	{
-		LOGLN("Camera parameters adjusting failed...");
-		return false;
-	}
-	// Calculation of the mean focal for the warping scale
-	vector<double> focals((int)cameras.size());
-
-#pragma omp parallel for
-	for (int i = 0; i < cameras.size(); i++)
-	{
-		focals[i] = cameras[i].focal;
-		//std::cout << "R = " << std::endl << " " << cameras[i].R << std::endl << std::endl;
-		//std::cout << "t = " << std::endl << " " << cameras[i].t << std::endl << std::endl;
-	}
-
-	sort(focals.begin(), focals.end());
-
-
-	if (focals.size() % 2 == 1)
-	{
-		warped_image_scale = static_cast<float>(focals[focals.size() / 2]);
-	}
-	else
-	{
-		warped_image_scale = static_cast<float>(focals[focals.size() / 2 - 1] + focals[focals.size() / 2]) * 0.5f;
-	}
-
-	// Do wave correct i.e. try to make panorama more lined-up horizontally
-	vector<Mat> rmats((int)cameras.size());
-#pragma omp parallel for
-	for (int i = 0; i < cameras.size(); i++)
-	{
-		rmats[i] = cameras[i].R.clone();
-	}
-
-	waveCorrect(rmats, WAVE_CORRECT_HORIZ);
-
-#pragma omp parallel for
-	for (int i = 0; i < cameras.size(); i++)
-	{
-		cameras[i].R = rmats[i];
-	}*/
 	cameras = vector<CameraParams>(NUM_IMAGES);
 	//estimateFocal(features, pairwise_matches, focals);
 	warped_image_scale = 503;
@@ -291,8 +222,6 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
 		warped_image_scale = (focals[focals.size() / 2 - 1] + focals[focals.size() / 2]) * 0.5f;
 	}
 
-	warped_image_scale *= 1.00;
-	
 	for (int i = 0; i < cameras.size(); ++i) {
 		cameras[i].focal = warped_image_scale;
 	}
@@ -558,7 +487,7 @@ bool stitch_calib(vector<vector<Mat>> full_img, vector<CameraParams> &cameras, v
 	times[1] = getTickCount();// std::chrono::system_clock::now();
 
 	vector<MatchesInfo> pairwise_matches(NUM_IMAGES -1 + (int)wrapAround);
-	Ptr<BestOf2NearestMatcher> matcher = makePtr<BestOf2NearestMatcher>(true, MATCH_CONF);
+	Ptr<DescriptorMatcher> dm = DescriptorMatcher::create("BruteForce-Hamming");
 
 	// Match features
 	for (int i = 0; i < pairwise_matches.size(); ++i) {
@@ -566,7 +495,15 @@ bool stitch_calib(vector<vector<Mat>> full_img, vector<CameraParams> &cameras, v
 		int idx2 = (i + 1 == NUM_IMAGES) ? 0 : i+1;
 		ImageFeatures f1 = features[idx1];
 		ImageFeatures f2 = features[idx2];
-		matcher->match(f1, f2, pairwise_matches[i]);
+		vector<vector<DMatch>> matches;
+		dm->knnMatch(f1.descriptors, f2.descriptors, matches, 2);
+		for (int j = 0; j < matches.size(); ++j) {
+			if (matches[j][0].distance < 0.7 * matches[j][1].distance) {
+				pairwise_matches[i].matches.push_back(matches[j][0]);
+			}
+		}
+		//matcher->match(f1, f2, pairwise_matches[i]);
+		pairwise_matches[i].confidence = 1;
 		pairwise_matches[i].src_img_idx = idx1;
 		pairwise_matches[i].dst_img_idx = idx2;
 	}
