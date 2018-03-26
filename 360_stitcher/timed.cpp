@@ -125,7 +125,6 @@ void findFeatures(vector<vector<Mat>> &full_img, vector<ImageFeatures> &features
 bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pairwise_matches, vector<CameraParams> &cameras, float &warped_image_scale) {
 	cameras = vector<CameraParams>(NUM_IMAGES);
 	//estimateFocal(features, pairwise_matches, focals);
-	warped_image_scale = 503;
 	for (int i = 0; i < cameras.size(); ++i) {
 		double rot = 2 * PI * i / 6;
 		Mat rotMat(3, 3, CV_32F);
@@ -231,8 +230,7 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
 void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> cameras, Ptr<Blender> blender, Ptr<ExposureCompensator> compensator, double work_scale,
 				double seam_scale, double seam_work_aspect, vector<cuda::GpuMat> &x_maps, vector<cuda::GpuMat> &y_maps, double &compose_scale,
 				float &warped_image_scale,  float &blend_width) {
-	//int64 t = getTickCount();
-	times[0] = std::chrono::system_clock::now();
+	//times[0] = std::chrono::system_clock::now();
 	// STEP 3: warping images // ------------------------------------------------------------------------------------------------
 
 	cuda::Stream stream;
@@ -286,8 +284,7 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 		gpu_seam_imgs_warped[i].download(images_warped_f[i], stream);
 	}
 
-	//LOGLN("Warping: " << (getTickCount() - t) * 1000 / getTickFrequency());
-	//t = getTickCount();
+	//times[1] = std::chrono::system_clock::now();
 	// STEP 4: compensating exposure and finding seams // -----------------------------------------------------------------------
 
 	compensator->feed(corners, images_warped, masks_warped);
@@ -301,8 +298,7 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 	images_warped.clear();
 	images_warped_f.clear();
 	masks.clear();
-	//LOGLN("Find seams: " << (getTickCount() - t) * 1000 / getTickFrequency());
-	//t = getTickCount();
+	//times[1] = std::chrono::system_clock::now();
 
 	//  STEP 5: composing panorama // -------------------------------------------------------------------------------------------
 
@@ -365,8 +361,7 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 
 	blender->prepare(corners, sizes);
 
-	//LOGLN("Prepare: " << (getTickCount() - t) * 1000 / getTickFrequency());
-	//t = getTickCount();
+	//times[2] = std::chrono::system_clock::now();
 
 	MultiBandBlender* mb = dynamic_cast<MultiBandBlender*>(blender.get());
 	int64 start = getTickCount();
@@ -386,37 +381,25 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 		Mat K;
 		cameras[img_idx].K().convertTo(K, CV_32F);
 
-		//LOGLN(img_idx << "--Convert in feed: " << (getTickCount() - t) * 1000 / getTickFrequency());
-		//t = getTickCount();
-
 		// Create warping map for online process
 		gpu_warper->buildMaps(img_size, K, cameras[img_idx].R, x_maps[img_idx], y_maps[img_idx]);
-		//LOGLN(img_idx << "--Build maps: " << (getTickCount() - t) * 1000 / getTickFrequency());
-		//t = getTickCount();
 
 		// Warp the current image mask
 		gpu_mask.create(img_size, CV_8U);
 		gpu_mask.setTo(Scalar::all(255));
 
 		gpu_warper->warp(gpu_mask, K, cameras[img_idx].R, INTER_NEAREST, BORDER_CONSTANT, gpu_mask_warped);
-		//LOGLN(img_idx << "--Warp mask in feed: " << (getTickCount() - t) * 1000 / getTickFrequency());
-		//t = getTickCount();
 
 		gpu_masks_warped[img_idx].upload(masks_warped[img_idx]);
 
 		dilation_filter->apply(gpu_masks_warped[img_idx], gpu_seam_mask);
 		cuda::resize(gpu_seam_mask, gpu_seam_mask, gpu_mask_warped.size(), 0.0, 0.0, 1);
 		cuda::bitwise_and(gpu_seam_mask, gpu_mask_warped, gpu_mask_warped, noArray());
-		//LOGLN(img_idx << "--Rando stuff: " << (getTickCount() - t) * 1000 / getTickFrequency());
-		//t = getTickCount();
 
 		// Blend the current image
 		mb->init_gpu(gpu_img, gpu_mask_warped, corners[img_idx]);
-		//LOGLN(img_idx << "--Feed images: " << (getTickCount() - t) * 1000 / getTickFrequency());
-		//t = getTickCount();
 	}
-	//LOGLN("Feed images: " << (getTickCount() - start) * 1000 / getTickFrequency());
-	//t = getTickCount();
+	//times[3] = std::chrono::system_clock::now();
 
 
 	Mat result;
@@ -424,8 +407,7 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 
 	blender->blend(result, result_mask);
 
-	//LOGLN("Blend pano: " << (getTickCount() - t) * 1000 / getTickFrequency());
-	//t = getTickCount();
+	//times[4] = std::chrono::system_clock::now();
 }
 
 
