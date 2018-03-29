@@ -66,7 +66,7 @@ int const NOCTAVESLAYERS = 2;
 vector<VideoCapture> CAPTURES;
 vector<String> video_files = {base + "/0.mp4", base + "/1.mp4", base + "/2.mp4", base + "/3.mp4", base + "/4.mp4", base + "/5.mp4"};
 const int TIMES = 5;
-std::chrono::system_clock::time_point times[TIMES];
+std::chrono::high_resolution_clock::time_point times[TIMES];
 
 // Print function for parallel threads - debugging
 void msg(String const message, double const value, int const thread_id)
@@ -230,7 +230,7 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
 void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> cameras, Ptr<Blender> blender, Ptr<ExposureCompensator> compensator, double work_scale,
 				double seam_scale, double seam_work_aspect, vector<cuda::GpuMat> &x_maps, vector<cuda::GpuMat> &y_maps, double &compose_scale,
 				float &warped_image_scale,  float &blend_width) {
-	//times[0] = std::chrono::system_clock::now();
+	//times[0] = std::chrono::high_resolution_clock::now();
 	// STEP 3: warping images // ------------------------------------------------------------------------------------------------
 
 	cuda::Stream stream;
@@ -284,7 +284,7 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 		gpu_seam_imgs_warped[i].download(images_warped_f[i], stream);
 	}
 
-	//times[1] = std::chrono::system_clock::now();
+	//times[1] = std::chrono::high_resolution_clock::now();
 	// STEP 4: compensating exposure and finding seams // -----------------------------------------------------------------------
 
 	compensator->feed(corners, images_warped, masks_warped);
@@ -298,7 +298,7 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 	images_warped.clear();
 	images_warped_f.clear();
 	masks.clear();
-	//times[1] = std::chrono::system_clock::now();
+	//times[1] = std::chrono::high_resolution_clock::now();
 
 	//  STEP 5: composing panorama // -------------------------------------------------------------------------------------------
 
@@ -361,7 +361,7 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 
 	blender->prepare(corners, sizes);
 
-	//times[2] = std::chrono::system_clock::now();
+	//times[2] = std::chrono::high_resolution_clock::now();
 
 	MultiBandBlender* mb = dynamic_cast<MultiBandBlender*>(blender.get());
 	int64 start = getTickCount();
@@ -399,7 +399,7 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 		// Blend the current image
 		mb->init_gpu(gpu_img, gpu_mask_warped, corners[img_idx]);
 	}
-	//times[3] = std::chrono::system_clock::now();
+	//times[3] = std::chrono::high_resolution_clock::now();
 
 
 	Mat result;
@@ -407,7 +407,7 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 
 	blender->blend(result, result_mask);
 
-	//times[4] = std::chrono::system_clock::now();
+	//times[4] = std::chrono::high_resolution_clock::now();
 }
 
 
@@ -418,7 +418,7 @@ bool stitch_calib(vector<vector<Mat>> full_img, vector<CameraParams> &cameras, v
 	  float &blend_width, Size &full_img_size)
 {
 	// STEP 1: reading images, feature finding and matching // ------------------------------------------------------------------
-	times[0] = std::chrono::system_clock::now();
+	times[0] = std::chrono::high_resolution_clock::now();
 	vector<ImageFeatures> features(NUM_IMAGES);
 
 	for (int j = 0; j < full_img.size(); ++j) {
@@ -433,7 +433,7 @@ bool stitch_calib(vector<vector<Mat>> full_img, vector<CameraParams> &cameras, v
 	full_img_size = full_img[0][0].size();
 
 	findFeatures(full_img, features, work_scale, seam_scale, seam_work_aspect);
-	times[1] = std::chrono::system_clock::now();
+	times[1] = std::chrono::high_resolution_clock::now();
 
 	vector<MatchesInfo> pairwise_matches(NUM_IMAGES -1 + (int)wrapAround);
 	Ptr<DescriptorMatcher> dm = DescriptorMatcher::create("BruteForce-Hamming");
@@ -458,17 +458,17 @@ bool stitch_calib(vector<vector<Mat>> full_img, vector<CameraParams> &cameras, v
 	}
 	//matcher->collectGarbage();
 
-	times[2] = std::chrono::system_clock::now();
+	times[2] = std::chrono::high_resolution_clock::now();
 	// STEP 2: estimating homographies // ---------------------------------------------------------------------------------------
 	if (!calibrateCameras(features, pairwise_matches, cameras, warped_image_scale)) {
 		return false;
 	}
 
-	times[3] = std::chrono::system_clock::now();
+	times[3] = std::chrono::high_resolution_clock::now();
 
 	warpImages(full_img[full_img.size()-1], full_img_size, cameras, blender, compensator, work_scale, seam_scale, seam_work_aspect,
 			   x_maps, y_maps, compose_scale, warped_image_scale, blend_width);
-	times[4] = std::chrono::system_clock::now();
+	times[4] = std::chrono::high_resolution_clock::now();
 	return true;
 }
 
@@ -481,7 +481,7 @@ void stitch_online(double compose_scale, Mat &img, cuda::GpuMat &x_map, cuda::Gp
 {
 	int img_num = thread_num % NUM_IMAGES;
 	if (img_num == printing) {
-		times[0] = std::chrono::system_clock::now();
+		times[0] = std::chrono::high_resolution_clock::now();
 	}
 	cuda::Stream stream;
 
@@ -490,7 +490,7 @@ void stitch_online(double compose_scale, Mat &img, cuda::GpuMat &x_map, cuda::Gp
 	full_imgs[img_num].upload(img, stream);
 
 	if (img_num == printing) {
-		times[1] = std::chrono::system_clock::now();
+		times[1] = std::chrono::high_resolution_clock::now();
 	}
 
 	// Resize if necessary
@@ -499,7 +499,7 @@ void stitch_online(double compose_scale, Mat &img, cuda::GpuMat &x_map, cuda::Gp
 		cuda::resize(full_imgs[img_num], images[img_num], Size(), compose_scale, compose_scale, 1, stream);
 
 		if (img_num == printing) {
-			times[2] = std::chrono::system_clock::now();
+			times[2] = std::chrono::high_resolution_clock::now();
 		}
 
 		// Warp using existing maps
@@ -513,14 +513,14 @@ void stitch_online(double compose_scale, Mat &img, cuda::GpuMat &x_map, cuda::Gp
 	gc->apply_gpu(img_num, Point(), images[img_num], cuda::GpuMat());
 	
 	if (img_num == printing) {
-		times[3] = std::chrono::system_clock::now();
+		times[3] = std::chrono::high_resolution_clock::now();
 	}
 	
 	// Calculate pyramids for blending
 	mb->feed_online(images[img_num], img_num, stream);
 
 	if (img_num == printing) {
-		times[4] = std::chrono::system_clock::now();
+		times[4] = std::chrono::high_resolution_clock::now();
 	}
 }
 
@@ -536,9 +536,9 @@ void stitch_one(double compose_scale, vector<Mat> &imgs, vector<cuda::GpuMat> &x
 	Mat result;
 	Mat result_mask;
 	cuda::GpuMat out;
-	times[0] = std::chrono::system_clock::now();
+	times[0] = std::chrono::high_resolution_clock::now();
 	mb->blend(result, result_mask, out, true);
-	times[1] = std::chrono::system_clock::now();
+	times[1] = std::chrono::high_resolution_clock::now();
 	LOGLN("delta time: " << std::chrono::duration_cast<std::chrono::milliseconds>(times[1] - times[0]).count());
 	results.push(out);
 }
