@@ -1,8 +1,7 @@
+#include "networking.h"
 #include <iostream>
 #include <string>
 #include <Windows.h>
-#include "blockingqueue.h"
-#include "barrier.h"
 #include "opencv2/opencv_modules.hpp"
 #include <opencv2/core/utility.hpp>
 #include "opencv2/imgcodecs.hpp"
@@ -22,6 +21,9 @@
 #include "opencv2/cudaimgproc.hpp"
 #include "opencv2/cudaarithm.hpp"
 #include "opencv2/cudafeatures2d.hpp"
+
+#include "blockingqueue.h"
+#include "barrier.h"
 
 #include <fstream>
 #include <thread>
@@ -232,7 +234,6 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 				float &warped_image_scale,  float &blend_width) {
 	//times[0] = std::chrono::system_clock::now();
 	// STEP 3: warping images // ------------------------------------------------------------------------------------------------
-
 	cuda::Stream stream;
 	vector<cuda::GpuMat> gpu_imgs(NUM_IMAGES);
 	vector<cuda::GpuMat> gpu_seam_imgs(NUM_IMAGES);
@@ -301,7 +302,6 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 	//times[1] = std::chrono::system_clock::now();
 
 	//  STEP 5: composing panorama // -------------------------------------------------------------------------------------------
-
 	double compose_work_aspect = 1;
 
 	// Negative value means compose in original resolution
@@ -396,7 +396,7 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 		cuda::resize(gpu_seam_mask, gpu_seam_mask, gpu_mask_warped.size(), 0.0, 0.0, 1);
 		cuda::bitwise_and(gpu_seam_mask, gpu_mask_warped, gpu_mask_warped, noArray());
 
-		// Blend the current image
+		// Calculate mask pyramid for online process
 		mb->init_gpu(gpu_img, gpu_mask_warped, corners[img_idx]);
 	}
 	//times[3] = std::chrono::system_clock::now();
@@ -597,6 +597,21 @@ bool getImages(vector<VideoCapture> caps, vector<Mat> &images, int skip=0) {
 
 int main(int argc, char* argv[])
 {
+	vector<BlockingQueue<Mat>> que(6);
+	std::thread in_th;
+
+	if (startPolling(que, in_th)) {
+		return -1;
+	}
+	while (1) {
+		for (int i = 0; i < 6; ++i) {
+			Mat mat = que[i].pop();
+			imshow("Image", mat);
+		}
+	}
+	in_th.join();
+	return 0;
+
 	LOGLN("");
 	//cuda::printCudaDeviceInfo(0);
 	cuda::printShortCudaDeviceInfo(0);

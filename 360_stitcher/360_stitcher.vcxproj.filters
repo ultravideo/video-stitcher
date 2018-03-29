@@ -21,12 +21,18 @@
     <ClCompile Include="barrier.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="networking.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="barrier.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="blockingqueue.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="networking.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
