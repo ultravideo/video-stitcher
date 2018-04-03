@@ -1,0 +1,20 @@
+Automatic Panoramic Image Stitching
+http://mi.eng.cam.ac.uk/~cipolla/lectures/4F12/Slides/4F12-ImageStitching.pdf
+Automatic panoramic stitching with invariant features
+http://matthewalunbrown.com/papers/ijcv2007.pdf
+Panoramic Video Stitching  // Video Stabilization, Deblurring
+https://scholar.colorado.edu/cgi/viewcontent.cgi?referer=https://www.google.fi/&httpsredir=1&article=1047&context=csci_gradetds
+
+
+Important:
+Video Stitching with Spatial-Temporal Content-Preserving Warping
+https://pdfs.semanticscholar.org/2e40/88cea7f133fea5804a60e9d80691e0c03bfa.pdf
+Parallax-tolerant Image Stitching
+http://web.cecs.pdx.edu/~fliu/papers/cvpr2014-stitching.pdf
+Correspondence Insertion for As-Projective-As-Possible Image Stitching
+https://arxiv.org/pdf/1608.07997.pdf
+SEAGULL: Seam-guided Local Alignment for Parallax-tolerant Image Stitching
+http://publish.illinois.edu/visual-modeling-and-analytics/files/2016/08/Seagull.pdf
+Locally Warping-based Image Stitching by Imposing Line Constraints
+http://captain.whu.edu.cn/papers/CON_LWBI.pdf
+
