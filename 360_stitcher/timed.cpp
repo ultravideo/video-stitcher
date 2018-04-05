@@ -597,20 +597,21 @@ bool getImages(vector<VideoCapture> caps, vector<Mat> &images, int skip=0) {
 
 int main(int argc, char* argv[])
 {
-	vector<BlockingQueue<Mat>> que(6);
+	vector<BlockingQueue<Mat>> que(1);
 	std::thread in_th;
 
 	if (startPolling(que, in_th)) {
 		return -1;
 	}
+	Sleep(3000);
 	while (1) {
-		for (int i = 0; i < 6; ++i) {
-			Mat mat = que[i].pop();
+		//Sleep(1000);
+		for (int i = 0; i < 1; ++i) {
+			Mat mat = que[0].pop();
 			imshow("Image", mat);
+			waitKey(17);
 		}
 	}
-	in_th.join();
-	return 0;
 
 	LOGLN("");
 	//cuda::printCudaDeviceInfo(0);

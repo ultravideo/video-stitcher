@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <opencv2/imgproc.hpp>
 
 #define DEFAULT_BUFLEN 1024
 #define DEFAULT_PORT "6666"
@@ -83,40 +84,50 @@ int startPolling(std::vector<BlockingQueue<cv::Mat>> &queue, std::thread &th)
 
 #define IMG_WIDTH 1280
 #define IMG_HEIGHT 720
-#define CHANNELS 3
+#define CHANNELS 4
 void pollFrames(SOCKET &ConnectSocket, std::vector<BlockingQueue<cv::Mat>> &queue)
 {
 	int num_imgs = queue.size();
+	int max_idx = IMG_HEIGHT * IMG_WIDTH * CHANNELS;
 	int iResult;
 	const int recvbuflen = DEFAULT_BUFLEN;
 	char recvbuf[recvbuflen];
+	int copy_length;
+	int overflow;
 
-	cv::Mat mat(cv::Size(IMG_WIDTH, IMG_HEIGHT), CV_8U);
+	cv::Mat mat(cv::Size(IMG_WIDTH, IMG_HEIGHT), CV_8UC4);
 	int index = 0;
 	int img_idx = 0;
 	// Receive until the peer closes the connection
 	do {
 		iResult = recv(ConnectSocket, recvbuf, recvbuflen, 0);
 		if (iResult > 0) {
-			printf("Bytes received: %d\n", iResult);
-			memcpy(mat.data + index, recvbuf, iResult);
+			//printf("Bytes received: %d\n", iResult);
+			copy_length = cv::min(iResult, max_idx - index);
+			memcpy(mat.data + index, recvbuf, copy_length);
+			index += iResult;
 		}
 		else if (iResult == 0) {
 			printf("Connection closed\n");
 		}
 		else {
-			printf("recv failed with error: %d\n", WSAGetLastError());
+			//printf("recv failed with error: %d\n", WSAGetLastError());
 		}
 
-		index += iResult;
 		if (index >= IMG_WIDTH * IMG_HEIGHT * CHANNELS) {
 			index = 0;
+			cv::cvtColor(mat, mat, CV_RGBA2BGR);
 			queue[img_idx].push(mat);
 			++img_idx;
-			mat = cv::Mat();
-		}
-		if (img_idx == num_imgs) {
-			img_idx = 0;
+			if (img_idx == num_imgs) {
+				img_idx = 0;
+			}
+			mat = cv::Mat(cv::Size(IMG_WIDTH, IMG_HEIGHT), CV_8UC4);
+			overflow = iResult - copy_length;
+			if (overflow) {
+				memcpy(mat.data, recvbuf + copy_length, overflow);
+				index = overflow;
+			}
 		}
 
 	} while (1);
