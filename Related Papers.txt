@@ -4,7 +4,14 @@ Automatic panoramic stitching with invariant features
 http://matthewalunbrown.com/papers/ijcv2007.pdf
 Panoramic Video Stitching  // Video Stabilization, Deblurring
 https://scholar.colorado.edu/cgi/viewcontent.cgi?referer=https://www.google.fi/&httpsredir=1&article=1047&context=csci_gradetds
-
+Camera Image Stitching using Feature Points and Geometrical Features
+http://www.sersc.org/journals/IJMUE/vol10_no12_2015/29.pdf
+Seam-Driven Image Stitching
+https://www.comp.nus.edu.sg/~brown/pdf/eg13_seamdriven.pdf
+Image Alignment and Stitching: A Tutorial
+https://courses.cs.washington.edu/courses/cse576/05sp/papers/MSR-TR-2004-92.pdf
+A Novel Seam Finding Method Using Downscaling and Cost for Image Stitching
+https://www.hindawi.com/journals/js/2016/5258473/
 
 Important:
 Video Stitching with Spatial-Temporal Content-Preserving Warping
@@ -17,4 +24,5 @@ SEAGULL: Seam-guided Local Alignment for Parallax-tolerant Image Stitching
 http://publish.illinois.edu/visual-modeling-and-analytics/files/2016/08/Seagull.pdf
 Locally Warping-based Image Stitching by Imposing Line Constraints
 http://captain.whu.edu.cn/papers/CON_LWBI.pdf
-
+Direct Photometric Alignment by Mesh Deformation
+http://www.liushuaicheng.org/CVPR2017/DirectPhotometric.pdf
