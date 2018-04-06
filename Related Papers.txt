@@ -26,3 +26,9 @@ Locally Warping-based Image Stitching by Imposing Line Constraints
 http://captain.whu.edu.cn/papers/CON_LWBI.pdf
 Direct Photometric Alignment by Mesh Deformation
 http://www.liushuaicheng.org/CVPR2017/DirectPhotometric.pdf
+Rich360: Optimized spherical representation from structured panoramic camera arrays
+http://delivery.acm.org/10.1145/2930000/2925983/a63-lee.pdf?ip=130.230.18.220&id=2925983&acc=ACTIVE%20SERVICE&key=74A0E95D84AAE420.8CAACA10A81E6DB1.4D4702B0C3E38B35.4D4702B0C3E38B35&__acm__=1523006878_e1670080223c1aa54417d222a7397dcc
+Seamless Video Stitching from Hand-held Camera Inputs
+https://onlinelibrary.wiley.com/doi/full/10.1111/cgf.12848
+Content-Preserving Warps for 3D Video Stabilization
+http://web.cecs.pdx.edu/~fliu/project/3dstab.htm
