@@ -549,6 +549,31 @@ void stitch_online(double compose_scale, Mat &img, cuda::GpuMat &x_map, cuda::Gp
 		cuda::remap(full_imgs[img_num], images[img_num], x_map, y_map, INTER_LINEAR, BORDER_REFLECT, Scalar(), stream);
 	}
 	gc->apply_gpu(img_num, Point(), images[img_num], cuda::GpuMat());
+
+	Size mesh_size = images[img_num].size();
+	cuda::GpuMat small_mesh_x;
+	cuda::GpuMat small_mesh_y;
+	cuda::GpuMat mesh_map_x(mesh_size, x_map.type());
+	cuda::GpuMat mesh_map_y(mesh_size, y_map.type());
+	int N = 10;
+	int M = 10;
+	Mat mesh_cpu_x(N, M, x_map.type());
+	Mat mesh_cpu_y(N, M, y_map.type());
+	for (int i = 0; i < N; ++i) {
+		for (int j = 0; j < M; ++j) {
+			mesh_cpu_x.at<float>(i, j) = j * mesh_size.width / N;
+			mesh_cpu_y.at<float>(i, j) = i * mesh_size.height / M;
+			if (i < 10 & i > 0) {
+				mesh_cpu_y.at<float>(i, j) = abs(M / 2 - i) + i * mesh_size.height / M;
+			}
+		}
+	}
+	small_mesh_x.upload(mesh_cpu_x);
+	small_mesh_y.upload(mesh_cpu_y);
+	cuda::resize(small_mesh_x, mesh_map_x, mesh_size);
+	cuda::resize(small_mesh_y, mesh_map_y, mesh_size);
+
+	cuda::remap(images[img_num], images[img_num], mesh_map_x, mesh_map_y, INTER_LINEAR, BORDER_CONSTANT, Scalar(0), stream);
 	
 	if (img_num == printing) {
 		times[3] = std::chrono::high_resolution_clock::now();
