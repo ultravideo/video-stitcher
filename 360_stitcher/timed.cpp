@@ -468,11 +468,56 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 }
 
 
+void calibrateMeshWarp(vector<Mat> &full_imgs, vector<cuda::GpuMat> &x_mesh, vector<cuda::GpuMat> &y_mesh,
+					   vector<cuda::GpuMat> &x_maps, vector<cuda::GpuMat> &y_maps, double compose_scale) {
+	int64 t = getTickCount();
+	vector<Mat> images(full_imgs.size());
+	Mat x_map;
+	Mat y_map;
+	for (int i = 0; i < full_imgs.size(); ++i) {
+		LOGLN("Suus: " << (getTickCount() - t) / getTickFrequency() * 1000);
+		t = getTickCount();
+		resize(full_imgs[i], images[i], Size(), compose_scale, compose_scale);
+		x_maps[i].download(x_map);
+		y_maps[i].download(y_map);
+		remap(images[i], images[i], x_map, y_map, INTER_LINEAR);
+		Size mesh_size = images[i].size();
+		cuda::GpuMat small_mesh_x;
+		cuda::GpuMat small_mesh_y;
+		x_mesh[i] = cuda::GpuMat(mesh_size, CV_32FC1);
+		y_mesh[i] = cuda::GpuMat(mesh_size, CV_32FC1);
+		LOGLN("Suus: " << (getTickCount() - t) / getTickFrequency() * 1000);
+		t = getTickCount();
+		int N = 10;
+		int M = 10;
+		Mat mesh_cpu_x(N, M, CV_32FC1);
+		Mat mesh_cpu_y(N, M, CV_32FC1);
+		for (int i = 0; i < N; ++i) {
+			for (int j = 0; j < M; ++j) {
+				mesh_cpu_x.at<float>(i, j) = j * mesh_size.width / N;
+				mesh_cpu_y.at<float>(i, j) = i * mesh_size.height / M;
+				if (i < 10 & i > 0) {
+					mesh_cpu_y.at<float>(i, j) = abs(M / 2 - i) + i * mesh_size.height / M;
+				}
+			}
+		}
+		LOGLN("Suus: " << (getTickCount() - t) / getTickFrequency() * 1000);
+		t = getTickCount();
+		small_mesh_x.upload(mesh_cpu_x);
+		small_mesh_y.upload(mesh_cpu_y);
+		cuda::resize(small_mesh_x, x_mesh[i], mesh_size);
+		cuda::resize(small_mesh_y, y_mesh[i], mesh_size);
+		LOGLN("Suus: " << (getTickCount() - t) / getTickFrequency() * 1000);
+	}
+	LOGLN("Suus: " << (getTickCount() - t) / getTickFrequency() * 1000);
+}
+
+
   // Takes in maps for 3D remapping, compose scale for sizing final panorama, blender and image size.
   // Returns true if all the phases of calibration are successful.
-bool stitch_calib(vector<vector<Mat>> full_img, vector<CameraParams> &cameras, vector<cuda::GpuMat> &x_maps, vector<cuda::GpuMat> &y_maps, double &work_scale,
-	double &seam_scale, double &seam_work_aspect, double &compose_scale, Ptr<Blender> &blender, Ptr<ExposureCompensator> compensator, float &warped_image_scale,
-	  float &blend_width, Size &full_img_size)
+bool stitch_calib(vector<vector<Mat>> full_img, vector<CameraParams> &cameras, vector<cuda::GpuMat> &x_maps, vector<cuda::GpuMat> &y_maps, vector<cuda::GpuMat> &x_mesh,
+	vector<cuda::GpuMat> &y_mesh, double &work_scale, double &seam_scale, double &seam_work_aspect, double &compose_scale, Ptr<Blender> &blender,
+	Ptr<ExposureCompensator> compensator, float &warped_image_scale, float &blend_width, Size &full_img_size)
 {
 	// STEP 1: reading images, feature finding and matching // ------------------------------------------------------------------
 	times[0] = std::chrono::high_resolution_clock::now();
@@ -506,6 +551,9 @@ bool stitch_calib(vector<vector<Mat>> full_img, vector<CameraParams> &cameras, v
 
 	warpImages(full_img[full_img.size()-1], full_img_size, cameras, blender, compensator, work_scale, seam_scale, seam_work_aspect,
 			   x_maps, y_maps, compose_scale, warped_image_scale, blend_width);
+	times[3] = std::chrono::high_resolution_clock::now();
+
+	calibrateMeshWarp(full_img[full_img.size()-1], x_mesh, y_mesh, x_maps, y_maps, compose_scale);
 	times[4] = std::chrono::high_resolution_clock::now();
 	return true;
 }
@@ -514,7 +562,7 @@ vector<cuda::GpuMat> full_imgs(NUM_IMAGES);
 vector<cuda::GpuMat> images(NUM_IMAGES);
 int printing = 0;
 // Online stitching fuction, which resizes if necessary, remaps to 3D and uses the stripped version of feed function
-void stitch_online(double compose_scale, Mat &img, cuda::GpuMat &x_map, cuda::GpuMat &y_map, 
+void stitch_online(double compose_scale, Mat &img, cuda::GpuMat &x_map, cuda::GpuMat &y_map, cuda::GpuMat &x_mesh, cuda::GpuMat &y_mesh, 
 							MultiBandBlender* mb, GainCompensator* gc, int thread_num)
 {
 	int img_num = thread_num % NUM_IMAGES;
@@ -550,30 +598,7 @@ void stitch_online(double compose_scale, Mat &img, cuda::GpuMat &x_map, cuda::Gp
 	}
 	gc->apply_gpu(img_num, Point(), images[img_num], cuda::GpuMat());
 
-	Size mesh_size = images[img_num].size();
-	cuda::GpuMat small_mesh_x;
-	cuda::GpuMat small_mesh_y;
-	cuda::GpuMat mesh_map_x(mesh_size, x_map.type());
-	cuda::GpuMat mesh_map_y(mesh_size, y_map.type());
-	int N = 10;
-	int M = 10;
-	Mat mesh_cpu_x(N, M, x_map.type());
-	Mat mesh_cpu_y(N, M, y_map.type());
-	for (int i = 0; i < N; ++i) {
-		for (int j = 0; j < M; ++j) {
-			mesh_cpu_x.at<float>(i, j) = j * mesh_size.width / N;
-			mesh_cpu_y.at<float>(i, j) = i * mesh_size.height / M;
-			if (i < 10 & i > 0) {
-				mesh_cpu_y.at<float>(i, j) = abs(M / 2 - i) + i * mesh_size.height / M;
-			}
-		}
-	}
-	small_mesh_x.upload(mesh_cpu_x);
-	small_mesh_y.upload(mesh_cpu_y);
-	cuda::resize(small_mesh_x, mesh_map_x, mesh_size);
-	cuda::resize(small_mesh_y, mesh_map_y, mesh_size);
-
-	cuda::remap(images[img_num], images[img_num], mesh_map_x, mesh_map_y, INTER_LINEAR, BORDER_CONSTANT, Scalar(0), stream);
+	cuda::remap(images[img_num], images[img_num], x_mesh, y_mesh, INTER_LINEAR, BORDER_CONSTANT, Scalar(0), stream);
 	
 	if (img_num == printing) {
 		times[3] = std::chrono::high_resolution_clock::now();
@@ -587,10 +612,10 @@ void stitch_online(double compose_scale, Mat &img, cuda::GpuMat &x_map, cuda::Gp
 	}
 }
 
-void stitch_one(double compose_scale, vector<Mat> &imgs, vector<cuda::GpuMat> &x_maps, vector<cuda::GpuMat> &y_maps,
+void stitch_one(double compose_scale, vector<Mat> &imgs, vector<cuda::GpuMat> &x_maps, vector<cuda::GpuMat> &y_maps, vector<cuda::GpuMat> &x_mesh, vector<cuda::GpuMat> &y_mesh,
 				MultiBandBlender* mb, GainCompensator* gc, BlockingQueue<cuda::GpuMat> &results) {
 	for (int i = 0; i < NUM_IMAGES; ++i) {
-		stitch_online(compose_scale, std::ref(imgs[i]), std::ref(x_maps[i]), std::ref(y_maps[i]), mb, gc, i);
+		stitch_online(compose_scale, std::ref(imgs[i]), std::ref(x_maps[i]), std::ref(y_maps[i]), std::ref(x_mesh[i]), std::ref(y_mesh[i]), mb, gc, i);
 	}
 	LOGLN("Frame:::::");
 	for (int i = 0; i < TIMES-1; ++i) {
@@ -680,6 +705,8 @@ int main(int argc, char* argv[])
 
 	vector<cuda::GpuMat> x_maps(NUM_IMAGES);
 	vector<cuda::GpuMat> y_maps(NUM_IMAGES);
+	vector<cuda::GpuMat> x_mesh(NUM_IMAGES);
+	vector<cuda::GpuMat> y_mesh(NUM_IMAGES);
 	Size full_img_size;
 	
 	double work_scale = 1;
@@ -704,7 +731,7 @@ int main(int argc, char* argv[])
 		}
 	}
 	//if (!stitch_calib(x_maps, y_maps, compose_scale, blender, blend_width, full_img_size, corners, sizes))
-	if (!stitch_calib(full_img, cameras, x_maps, y_maps, work_scale, seam_scale, seam_work_aspect, compose_scale, blender, compensator, warped_image_scale, blend_width, full_img_size))
+	if (!stitch_calib(full_img, cameras, x_maps, y_maps, x_mesh, y_mesh, work_scale, seam_scale, seam_work_aspect, compose_scale, blender, compensator, warped_image_scale, blend_width, full_img_size))
 	{
 		LOGLN("");
 		LOGLN("Calibration failed!");
@@ -712,7 +739,7 @@ int main(int argc, char* argv[])
 	}
 	blender = Blender::createDefault(Blender::MULTI_BAND, true);
 	int64 start = getTickCount();
-	if (!stitch_calib(full_img, cameras, x_maps, y_maps, work_scale, seam_scale, seam_work_aspect, compose_scale, blender, compensator, warped_image_scale, blend_width, full_img_size))
+	if (!stitch_calib(full_img, cameras, x_maps, y_maps, x_mesh, y_mesh, work_scale, seam_scale, seam_work_aspect, compose_scale, blender, compensator, warped_image_scale, blend_width, full_img_size))
 	{
 		LOGLN("");
 		LOGLN("Calibration failed!");
@@ -781,7 +808,7 @@ int main(int argc, char* argv[])
 			//y_maps = vector<cuda::GpuMat>(NUM_IMAGES);
 			//warpImages(input, full_img_size, cameras, blender, work_scale, seam_scale, seam_work_aspect, x_maps, y_maps,
 			//		   compose_scale, warped_image_scale, blend_width);
-			if (!stitch_calib(full_img, cameras, x_maps, y_maps, work_scale, seam_scale, seam_work_aspect, compose_scale, blender, compensator, warped_image_scale, blend_width, full_img_size))
+			if (!stitch_calib(full_img, cameras, x_maps, y_maps, x_mesh, y_mesh, work_scale, seam_scale, seam_work_aspect, compose_scale, blender, compensator, warped_image_scale, blend_width, full_img_size))
 			{
 				LOGLN("");
 				LOGLN("Calibration failed!");
@@ -791,7 +818,7 @@ int main(int argc, char* argv[])
 			LOGLN("Rewarp: " << (getTickCount()-t)*1000/getTickFrequency());
 		}
 
-		stitch_one(compose_scale, input, x_maps, y_maps, mb, gc, results);
+		stitch_one(compose_scale, input, x_maps, y_maps, x_mesh, y_mesh, mb, gc, results);
 		++frame_amt;
 	}
 
