@@ -12,6 +12,8 @@ Image Alignment and Stitching: A Tutorial
 https://courses.cs.washington.edu/courses/cse576/05sp/papers/MSR-TR-2004-92.pdf
 A Novel Seam Finding Method Using Downscaling and Cost for Image Stitching
 https://www.hindawi.com/journals/js/2016/5258473/
+A New Optimal Seam Selection Method for Airborne Image Stitching
+http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.877.1825&rep=rep1&type=pdf
 
 Important:
 Video Stitching with Spatial-Temporal Content-Preserving Warping
@@ -32,3 +34,4 @@ Seamless Video Stitching from Hand-held Camera Inputs
 https://onlinelibrary.wiley.com/doi/full/10.1111/cgf.12848
 Content-Preserving Warps for 3D Video Stabilization
 http://web.cecs.pdx.edu/~fliu/project/3dstab.htm
+http://research.cs.wisc.edu/graphics/Papers/Gleicher/fliu/siggraph09_preprint.pdf
