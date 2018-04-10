@@ -87,7 +87,7 @@
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
       <SDLCheck>true</SDLCheck>
-      <AdditionalIncludeDirectories>C:\Local\kattaine\Programs\customcv\custombuild\install\include</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Local\kattaine\Programs\customcv\custombuild\install\include;C:\Local\kattaine\Data\Stitcher\360_stitcher\external</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <AdditionalLibraryDirectories>C:\Local\kattaine\Programs\customcv\custombuild\lib\Debug</AdditionalLibraryDirectories>

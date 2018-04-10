@@ -24,6 +24,8 @@
 #include "opencv2/cudafeatures2d.hpp"
 #include "opencv2/calib3d.hpp"
 
+#include <Eigen/SparseCholesky>
+
 #include <fstream>
 #include <thread>
 #include <mutex>
@@ -474,6 +476,8 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<cuda::GpuMat> &x_mesh, vec
 	vector<Mat> images(full_imgs.size());
 	Mat x_map;
 	Mat y_map;
+	int N = 10;
+	int M = 10;
 	for (int i = 0; i < full_imgs.size(); ++i) {
 		LOGLN("Suus: " << (getTickCount() - t) / getTickFrequency() * 1000);
 		t = getTickCount();
@@ -488,16 +492,14 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<cuda::GpuMat> &x_mesh, vec
 		y_mesh[i] = cuda::GpuMat(mesh_size, CV_32FC1);
 		LOGLN("Suus: " << (getTickCount() - t) / getTickFrequency() * 1000);
 		t = getTickCount();
-		int N = 10;
-		int M = 10;
 		Mat mesh_cpu_x(N, M, CV_32FC1);
 		Mat mesh_cpu_y(N, M, CV_32FC1);
 		for (int i = 0; i < N; ++i) {
 			for (int j = 0; j < M; ++j) {
-				mesh_cpu_x.at<float>(i, j) = j * mesh_size.width / N;
-				mesh_cpu_y.at<float>(i, j) = i * mesh_size.height / M;
+				mesh_cpu_x.at<float>(i, j) = j * mesh_size.width / M;
+				mesh_cpu_y.at<float>(i, j) = i * mesh_size.height / N;
 				if (i < 10 & i > 0) {
-					mesh_cpu_y.at<float>(i, j) = abs(M / 2 - i) + i * mesh_size.height / M;
+					mesh_cpu_y.at<float>(i, j) = abs(M / 2 - i) + i * mesh_size.height / N;
 				}
 			}
 		}
@@ -509,7 +511,14 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<cuda::GpuMat> &x_mesh, vec
 		cuda::resize(small_mesh_y, y_mesh[i], mesh_size);
 		LOGLN("Suus: " << (getTickCount() - t) / getTickFrequency() * 1000);
 	}
-	LOGLN("Suus: " << (getTickCount() - t) / getTickFrequency() * 1000);
+	Eigen::SparseMatrix<double> A;
+	Eigen::VectorXd b, x;
+	
+	for (int i = 0; i < N; ++i) {
+		for (int j = 0; j < M-1; ++j) {
+
+		}
+	}
 }
 
 
