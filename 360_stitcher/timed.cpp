@@ -47,6 +47,7 @@ int skip_frames = 220;
 bool wrapAround = false;
 bool recalibrate = false;
 bool save_video = false;
+bool use_stream = false;
 int const NUM_IMAGES = 5;
 int offsets[NUM_IMAGES] = {0, 37, 72, 72, 37}; // static
 //int offsets[NUM_IMAGES] = {0, 0, 0, 0, 0, 0}; // dynamic
@@ -595,6 +596,13 @@ bool getImages(vector<VideoCapture> caps, vector<Mat> &images, int skip=0) {
 	return true;
 }
 
+bool getImages(vector<BlockingQueue<Mat>> queues, vector<Mat> &images) {
+	for (int i = 0; i < NUM_IMAGES; ++i) {
+		images[i] = queues[i].pop();
+	}
+	return true;
+}
+
 int main(int argc, char* argv[])
 {
 	vector<BlockingQueue<Mat>> que(1);
@@ -723,7 +731,12 @@ int main(int argc, char* argv[])
 	while(1) 
 	{
 		vector<Mat> input;
-		bool capped = getImages(CAPTURES, input);
+		bool capped;
+		if (use_stream) {
+			capped = getImages(que, input);
+		} else {
+			capped = getImages(CAPTURES, input);
+		}
 		if (!capped) {
 			break;
 		}
