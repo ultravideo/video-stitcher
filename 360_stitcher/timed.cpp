@@ -24,6 +24,7 @@
 #include "opencv2/cudafeatures2d.hpp"
 #include "opencv2/calib3d.hpp"
 
+#include <Eigen/IterativeLinearSolvers>
 #include <Eigen/SparseCholesky>
 
 #include <fstream>
@@ -43,14 +44,14 @@ using namespace cv::detail;
 
 std::mutex cout_mutex;
 
-std::string base = "static";
-int skip_frames = 220;
+std::string base = "6cam";
+int skip_frames = 0;
 bool wrapAround = false;
 bool recalibrate = false;
 bool save_video = false;
-int const NUM_IMAGES = 5;
-int offsets[NUM_IMAGES] = {0, 37, 72, 72, 37}; // static
-//int offsets[NUM_IMAGES] = {0, 0, 0, 0, 0, 0}; // dynamic
+int const NUM_IMAGES = 6;
+//int offsets[NUM_IMAGES] = {0, 37, 72, 72, 37}; // static
+int offsets[NUM_IMAGES] = { 0 }; // dynamic
 int const INIT_FRAME_AMT = 1;
 int const INIT_SKIPS = 0;
 int const RECALIB_DEL = 2;
@@ -185,7 +186,7 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
 	cameras = vector<CameraParams>(NUM_IMAGES);
 	//estimateFocal(features, pairwise_matches, focals);
 	for (int i = 0; i < cameras.size(); ++i) {
-		double rot = 2 * PI * i / 6;
+		double rot = 2 * PI * (i) / 6;
 		Mat rotMat(3, 3, CV_32F);
 		double L[3] = {cos(rot), 0, sin(rot)};
 		double u[3] = {0, 1, 0};
@@ -470,55 +471,168 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 }
 
 
-void calibrateMeshWarp(vector<Mat> &full_imgs, vector<cuda::GpuMat> &x_mesh, vector<cuda::GpuMat> &y_mesh,
+void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, vector<MatchesInfo> &pairwise_matches, vector<cuda::GpuMat> &x_mesh, vector<cuda::GpuMat> &y_mesh,
 					   vector<cuda::GpuMat> &x_maps, vector<cuda::GpuMat> &y_maps, double compose_scale) {
 	int64 t = getTickCount();
-	vector<Mat> images(full_imgs.size());
-	Mat x_map;
-	Mat y_map;
 	int N = 10;
 	int M = 10;
-	for (int i = 0; i < full_imgs.size(); ++i) {
-		LOGLN("Suus: " << (getTickCount() - t) / getTickFrequency() * 1000);
-		t = getTickCount();
-		resize(full_imgs[i], images[i], Size(), compose_scale, compose_scale);
-		x_maps[i].download(x_map);
-		y_maps[i].download(y_map);
-		remap(images[i], images[i], x_map, y_map, INTER_LINEAR);
-		Size mesh_size = images[i].size();
-		cuda::GpuMat small_mesh_x;
-		cuda::GpuMat small_mesh_y;
-		x_mesh[i] = cuda::GpuMat(mesh_size, CV_32FC1);
-		y_mesh[i] = cuda::GpuMat(mesh_size, CV_32FC1);
-		LOGLN("Suus: " << (getTickCount() - t) / getTickFrequency() * 1000);
-		t = getTickCount();
-		Mat mesh_cpu_x(N, M, CV_32FC1);
-		Mat mesh_cpu_y(N, M, CV_32FC1);
+	vector<Size> mesh_size(full_imgs.size());
+	vector<Mat> images(full_imgs.size());
+	vector<Mat> mesh_cpu_x(full_imgs.size(), Mat(N, M, CV_32FC1));
+	vector<Mat> mesh_cpu_y(full_imgs.size(), Mat(N, M, CV_32FC1));
+	cuda::GpuMat small_mesh_x;
+	cuda::GpuMat small_mesh_y;
+	Mat x_map;
+	Mat y_map;
+	for (int idx = 0; idx < full_imgs.size(); ++idx) {
+		resize(full_imgs[idx], images[idx], Size(), compose_scale, compose_scale);
+		x_maps[idx].download(x_map);
+		y_maps[idx].download(y_map);
+		remap(images[idx], images[idx], x_map, y_map, INTER_LINEAR);
+		mesh_size[idx] = images[idx].size();
+		x_mesh[idx] = cuda::GpuMat(mesh_size[idx], CV_32FC1);
+		y_mesh[idx] = cuda::GpuMat(mesh_size[idx], CV_32FC1);
 		for (int i = 0; i < N; ++i) {
 			for (int j = 0; j < M; ++j) {
-				mesh_cpu_x.at<float>(i, j) = j * mesh_size.width / M;
-				mesh_cpu_y.at<float>(i, j) = i * mesh_size.height / N;
-				if (i < 10 & i > 0) {
-					mesh_cpu_y.at<float>(i, j) = abs(M / 2 - i) + i * mesh_size.height / N;
+				mesh_cpu_x[idx].at<float>(i, j) = j * mesh_size[idx].width / (M-1);
+				mesh_cpu_y[idx].at<float>(i, j) = i * mesh_size[idx].height / (N-1);
+			}
+		}
+		//std::cout << mesh_cpu_x[idx] << std::endl;
+		small_mesh_x.upload(mesh_cpu_x[idx]);
+		small_mesh_y.upload(mesh_cpu_y[idx]);
+		cuda::resize(small_mesh_x, x_mesh[idx], mesh_size[idx]);
+		cuda::resize(small_mesh_y, y_mesh[idx], mesh_size[idx]);
+	}
+	int num_rows = 2 * images.size()*N*M + 2*images.size()*(N-1)*(M-1);
+	Eigen::SparseMatrix<double> A(num_rows, 2*N*M*images.size());
+	Eigen::VectorXd b(num_rows), x;
+	float alphas[2] = {0.01, 0.001};
+	b.fill(0);
+
+	vector<float> a0(N-1, M-1);
+	vector<float> a1(N-1, M-1);
+	vector<float> a2(N-1, M-1);
+	vector<float> a3(N-1, M-1);
+	for (int i = 0; i < N - 1; ++i) {
+		for (int j = 0; j < M - 1; ++j) {
+			float x1 = j * images[0].cols / M;
+			float x2 = (j+1) * images[0].cols / M;
+			float y1 = i * images[0].rows / N;
+			float y2 = (i+1) * images[0].rows / N;
+		}
+	}
+
+	for (int idx = 0; idx < pairwise_matches.size(); ++idx) {
+		int src = pairwise_matches[idx].src_img_idx;
+		int dst = pairwise_matches[idx].dst_img_idx;
+		for (int i = 0; i < pairwise_matches[idx].matches.size(); ++i) {
+			//pairwise_matches[idx].
+		}
+	}
+	
+	float a = alphas[0];
+	int row = 0;
+	for (int idx = 0; idx < images.size(); ++idx) {
+		for (int i = 0; i < N; ++i) {
+			for (int j = 0; j < M; ++j) {
+				float x1 = j * mesh_size[idx].width / (M-1);
+				float y1 = i * mesh_size[idx].height / (N-1);
+				float tau = 1;
+				A.insert(2*(j + i*M + idx*M*N), 2*(j + i*M + idx*M*N)) = a * tau;
+				A.insert(2*(j + i*M + idx*M*N) + 1, 2*(j + i*M + idx*M*N)+1) = a * tau;
+				b(2*(j + i*M + idx*M*N)) = a * tau * x1;
+				b(2*(j + i*M + idx*M*N)+1) = a * tau * y1;
+				row += 2;
+			}
+		}
+	}
+	a = alphas[1];
+	for (int idx = 0; idx < images.size(); ++idx) {
+		for (int i = 0; i < N-1; ++i) {
+			for (int j = 0; j < M-1; ++j) {
+				float x1 = mesh_cpu_x[idx].at<float>(i, j);
+				float x2 = mesh_cpu_x[idx].at<float>(i+1, j);
+				float x3 = mesh_cpu_x[idx].at<float>(i, j+1);
+				float x4 = mesh_cpu_x[idx].at<float>(i+1, j+1);
+				float y1 = mesh_cpu_y[idx].at<float>(i, j);
+				float y2 = mesh_cpu_y[idx].at<float>(i+1, j);
+				float y3 = mesh_cpu_y[idx].at<float>(i, j+1);
+				float y4 = mesh_cpu_y[idx].at<float>(i+1, j+1);
+				float dx = x3 - x2;
+				float dy = y3 - y2;
+				float dx2 = x4 - x3;
+				float dy2 = y4 - y3;
+				float u = (dx*x1-dx*x2+dy*y1-dy*y2)/(dx*dx+dy*dy);
+				float v = (-dx*y1+dx*y2+x1*dy-x2*dy)/(dx*dx+dy*dy);
+				float u2 = (dx2*x2-dx2*x3+dy2*y2-dy2*y3)/(dx2*dx2+dy2*dy2);
+				float v2 = (-dx2*y2+dx2*y3+x2*dy2-x3*dy2)/(dx2*dx2+dy2*dy2);
+				A.insert(row, 2*(j + M * i + M*N*idx)) = a; // x1
+				A.insert(row, 2*(j + M * i + M*N*idx) + 1) = a; // y1
+				A.insert(row, 2*(j + M * (i+1) + M*N*idx)) = a*(u + v - 1); // x2
+				A.insert(row, 2*(j + M * (i+1) + M*N*idx) + 1) = a*(u - v - 1); // y2
+				A.insert(row, 2*(j+1 + M * i + M*N*idx)) = a*(-u - v); // x3
+				A.insert(row, 2*(j+1 + M * i + M*N*idx) + 1) = a*(-u + v); // y3
+				//A.insert(row+1, 2*(j + M * (i+1) + M*N*idx)) = 1; // x2
+				//A.insert(row+1, 2*(j + M * (i+1) + M*N*idx) + 1) = 1; // y2
+				//A.insert(row+1, 2*(j+1 + M * i + M*N*idx)) = u + v - 1; // x3
+				//A.insert(row+1, 2*(j+1 + M * i + M*N*idx) + 1) = u - v - 1; // y3
+				//A.insert(row+1, 2*(j+1 + M * (i+1) + M*N*idx)) = -u - v; // x4
+				//A.insert(row+1, 2*(j+1 + M * (i+1) + M*N*idx) + 1) = -u + v; // x4
+				row += 2;
+			}
+		}
+	}
+	Eigen::LeastSquaresConjugateGradient<Eigen::SparseMatrix<double>> solver;
+	solver.compute(A);
+	x = solver.solve(b);
+	//std::cout << x << std::endl;
+	//std::cout << " " << std::endl;
+
+	cuda::GpuMat gpu_small_mesh_x;
+	cuda::GpuMat gpu_small_mesh_y;
+	Mat big_mesh_x;
+	Mat big_mesh_y;
+	for (int idx = 0; idx < full_imgs.size(); ++idx) {
+		for (int i = 0; i < N; ++i) {
+			for (int j = 0; j < M; ++j) {
+				//mesh_cpu_x[idx].at<float>(x(2 * (j + i*M)), x(2 * (j + i*M) + 1)) = j * images[idx].size().width / M;
+				//mesh_cpu_y[idx].at<float>(x(2 * (j + i*M)), x(2 * (j + i*M) + 1)) = i * images[idx].size().height / N;
+				//mesh_cpu_x[idx].at<float>(i, j) = j * mesh_size[idx].width / (M - 1); // x(2 * (j + i * M));
+				//mesh_cpu_y[idx].at<float>(i, j) = i * mesh_size[idx].height / (N - 1); //x(2 * (j + i*M) + 1);
+				mesh_cpu_x[idx].at<float>(i, j) = x(2 * (j + i * M + idx*M*N));
+				mesh_cpu_y[idx].at<float>(i, j) = x(2 * (j + i*M + idx*M*N) + 1);
+			}
+		}
+		resize(mesh_cpu_x[idx], big_mesh_x, mesh_size[idx]);
+		resize(mesh_cpu_y[idx], big_mesh_y, mesh_size[idx]);
+		std::cout << mesh_cpu_y[idx] << std::endl;
+		Mat warp_x(mesh_size[idx].height, mesh_size[idx].width, mesh_cpu_x[idx].type());
+		Mat warp_y(mesh_size[idx].height, mesh_size[idx].width, mesh_cpu_y[idx].type());
+		for (int i = 0; i < mesh_size[idx].height; ++i) {
+			for (int j = 0; j < mesh_size[idx].width; ++j) {
+				int x = (int)big_mesh_x.at<float>(i, j);
+				int y = (int)big_mesh_y.at<float>(i, j);
+				if (x >= 0 && y >= 0 && x < mesh_size[idx].width && y < mesh_size[idx].height) {
+					warp_x.at<float>(y, x) = j;
+					warp_y.at<float>(y, x) = i;
 				}
 			}
 		}
-		LOGLN("Suus: " << (getTickCount() - t) / getTickFrequency() * 1000);
-		t = getTickCount();
-		small_mesh_x.upload(mesh_cpu_x);
-		small_mesh_y.upload(mesh_cpu_y);
-		cuda::resize(small_mesh_x, x_mesh[i], mesh_size);
-		cuda::resize(small_mesh_y, y_mesh[i], mesh_size);
-		LOGLN("Suus: " << (getTickCount() - t) / getTickFrequency() * 1000);
-	}
-	Eigen::SparseMatrix<double> A;
-	Eigen::VectorXd b, x;
-	
-	for (int i = 0; i < N; ++i) {
-		for (int j = 0; j < M-1; ++j) {
-
+		for (int i = 0; i < mesh_size[idx].height; ++i) {
+			for (int j = 0; j < mesh_size[idx].width; ++j) {
+				if (!warp_x.at<float>(i, j)) {
+				}
+			}
 		}
+		x_mesh[idx].upload(warp_x);
+		y_mesh[idx].upload(warp_y);
+		//cuda::max(x_mesh[idx], Scalar(0), x_mesh[idx]);
+		//cuda::min(x_mesh[idx], Scalar(x_mesh[idx].cols), x_mesh[idx]);
+		//cuda::max(y_mesh[idx], Scalar(0), y_mesh[idx]);
+		//cuda::min(y_mesh[idx], Scalar(y_mesh[idx].rows), y_mesh[idx]);
 	}
+	int sis = 0;
 }
 
 
@@ -562,13 +676,14 @@ bool stitch_calib(vector<vector<Mat>> full_img, vector<CameraParams> &cameras, v
 			   x_maps, y_maps, compose_scale, warped_image_scale, blend_width);
 	times[3] = std::chrono::high_resolution_clock::now();
 
-	calibrateMeshWarp(full_img[full_img.size()-1], x_mesh, y_mesh, x_maps, y_maps, compose_scale);
+	calibrateMeshWarp(full_img[full_img.size()-1], features, pairwise_matches, x_mesh, y_mesh, x_maps, y_maps, compose_scale);
 	times[4] = std::chrono::high_resolution_clock::now();
 	return true;
 }
 
 vector<cuda::GpuMat> full_imgs(NUM_IMAGES);
 vector<cuda::GpuMat> images(NUM_IMAGES);
+Ptr<cuda::Filter> filter = cuda::createGaussianFilter(CV_8UC3, CV_8UC3, Size(5, 5), 15);
 int printing = 0;
 // Online stitching fuction, which resizes if necessary, remaps to 3D and uses the stripped version of feed function
 void stitch_online(double compose_scale, Mat &img, cuda::GpuMat &x_map, cuda::GpuMat &y_map, cuda::GpuMat &x_mesh, cuda::GpuMat &y_mesh, 
@@ -607,8 +722,10 @@ void stitch_online(double compose_scale, Mat &img, cuda::GpuMat &x_map, cuda::Gp
 	}
 	gc->apply_gpu(img_num, Point(), images[img_num], cuda::GpuMat());
 
+	// Warp the image according to a mesh
 	cuda::remap(images[img_num], images[img_num], x_mesh, y_mesh, INTER_LINEAR, BORDER_CONSTANT, Scalar(0), stream);
 	
+	//filter->apply(images[img_num], images[img_num], stream);
 	if (img_num == printing) {
 		times[3] = std::chrono::high_resolution_clock::now();
 	}
@@ -746,9 +863,9 @@ int main(int argc, char* argv[])
 		LOGLN("Calibration failed!");
 		return -1;
 	}
-	blender = Blender::createDefault(Blender::MULTI_BAND, true);
+	//blender = Blender::createDefault(Blender::MULTI_BAND, true);
 	int64 start = getTickCount();
-	if (!stitch_calib(full_img, cameras, x_maps, y_maps, x_mesh, y_mesh, work_scale, seam_scale, seam_work_aspect, compose_scale, blender, compensator, warped_image_scale, blend_width, full_img_size))
+	/*if (!stitch_calib(full_img, cameras, x_maps, y_maps, x_mesh, y_mesh, work_scale, seam_scale, seam_work_aspect, compose_scale, blender, compensator, warped_image_scale, blend_width, full_img_size))
 	{
 		LOGLN("");
 		LOGLN("Calibration failed!");
@@ -757,7 +874,7 @@ int main(int argc, char* argv[])
 
 	for (int i = 0; i < TIMES-1; ++i) {
 		LOGLN("delta time: " << std::chrono::duration_cast<std::chrono::milliseconds>(times[i+1] - times[i]).count());
-	}
+	}*/
 	LOGLN("Calibration done in: " << (getTickCount() - start) / getTickFrequency() * 1000 << " ms");
 	LOGLN("");
 	LOGLN("Proceeding to online process...");
