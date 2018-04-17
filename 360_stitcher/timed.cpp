@@ -22,6 +22,7 @@
 #include "opencv2/cudaimgproc.hpp"
 #include "opencv2/cudaarithm.hpp"
 #include "opencv2/cudafeatures2d.hpp"
+#include "opencv2/calib3d.hpp"
 
 #include <fstream>
 #include <thread>
@@ -122,6 +123,62 @@ void findFeatures(vector<vector<Mat>> &full_img, vector<ImageFeatures> &features
 	}
 }
 
+void matchFeatures(vector<ImageFeatures> &features, vector<MatchesInfo> &pairwise_matches) {
+	Ptr<DescriptorMatcher> dm = DescriptorMatcher::create("BruteForce-Hamming");
+
+	// Match features
+	for (int i = 0; i < pairwise_matches.size(); ++i) {
+		int idx1 = (i + 1 == NUM_IMAGES) ? i-1 : i;
+		int idx2 = (i + 1 == NUM_IMAGES) ? 0 : i+1;
+		ImageFeatures f1 = features[idx1];
+		ImageFeatures f2 = features[idx2];
+		vector<vector<DMatch>> matches;
+		dm->knnMatch(f1.descriptors, f2.descriptors, matches, 2);
+		for (int j = 0; j < matches.size(); ++j) {
+			if (matches[j][0].distance < 0.7 * matches[j][1].distance) {
+				pairwise_matches[i].matches.push_back(matches[j][0]);
+			}
+		}
+		Mat src_points(1, static_cast<int>(pairwise_matches[i].matches.size()), CV_32FC2);
+		Mat dst_points(1, static_cast<int>(pairwise_matches[i].matches.size()), CV_32FC2);
+		for (int j = 0; j < pairwise_matches[i].matches.size(); ++j) {
+			const DMatch& m = pairwise_matches[i].matches[j];
+
+			Point2f p = f1.keypoints[m.queryIdx].pt;
+			p.x -= f1.img_size.width * 0.5f;
+			p.y -= f1.img_size.height * 0.5f;
+			src_points.at<Point2f>(0, static_cast<int>(j)) = p;
+
+			p = f2.keypoints[m.trainIdx].pt;
+			p.x -= f2.img_size.width * 0.5f;
+			p.y -= f2.img_size.height * 0.5f;
+			dst_points.at<Point2f>(0, static_cast<int>(j)) = p;
+		}
+		pairwise_matches[i].src_img_idx = idx1;
+		pairwise_matches[i].dst_img_idx = idx2;
+
+		// Find pair-wise motion
+		pairwise_matches[i].H = findHomography(src_points, dst_points, pairwise_matches[i].inliers_mask, RANSAC);
+
+		// Find number of inliers
+		pairwise_matches[i].num_inliers = 0;
+		for (size_t i = 0; i < pairwise_matches[i].inliers_mask.size(); ++i)
+			if (pairwise_matches[i].inliers_mask[i])
+				pairwise_matches[i].num_inliers++;
+
+		// Confidence calculation copied from opencv feature matching code
+		// These coeffs are from paper M. Brown and D. Lowe. "Automatic Panoramic Image Stitching
+		// using Invariant Features"
+		pairwise_matches[i].confidence = pairwise_matches[i].num_inliers / (8 + 0.3 * pairwise_matches[i].matches.size());
+
+		// Set zero confidence to remove matches between too close images, as they don't provide
+		// additional information anyway. The threshold was set experimentally.
+		pairwise_matches[i].confidence = pairwise_matches[i].confidence > 3. ? 0. : pairwise_matches[i].confidence;
+
+		pairwise_matches[i].confidence = 1;
+	}
+
+}
 bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pairwise_matches, vector<CameraParams> &cameras, float &warped_image_scale) {
 	cameras = vector<CameraParams>(NUM_IMAGES);
 	//estimateFocal(features, pairwise_matches, focals);
@@ -436,27 +493,8 @@ bool stitch_calib(vector<vector<Mat>> full_img, vector<CameraParams> &cameras, v
 	times[1] = std::chrono::high_resolution_clock::now();
 
 	vector<MatchesInfo> pairwise_matches(NUM_IMAGES -1 + (int)wrapAround);
-	Ptr<DescriptorMatcher> dm = DescriptorMatcher::create("BruteForce-Hamming");
 
-	// Match features
-	for (int i = 0; i < pairwise_matches.size(); ++i) {
-		int idx1 = (i + 1 == NUM_IMAGES) ? i-1 : i;
-		int idx2 = (i + 1 == NUM_IMAGES) ? 0 : i+1;
-		ImageFeatures f1 = features[idx1];
-		ImageFeatures f2 = features[idx2];
-		vector<vector<DMatch>> matches;
-		dm->knnMatch(f1.descriptors, f2.descriptors, matches, 2);
-		for (int j = 0; j < matches.size(); ++j) {
-			if (matches[j][0].distance < 0.7 * matches[j][1].distance) {
-				pairwise_matches[i].matches.push_back(matches[j][0]);
-			}
-		}
-		//matcher->match(f1, f2, pairwise_matches[i]);
-		pairwise_matches[i].confidence = 1;
-		pairwise_matches[i].src_img_idx = idx1;
-		pairwise_matches[i].dst_img_idx = idx2;
-	}
-	//matcher->collectGarbage();
+	matchFeatures(features, pairwise_matches);
 
 	times[2] = std::chrono::high_resolution_clock::now();
 	// STEP 2: estimating homographies // ---------------------------------------------------------------------------------------
