@@ -44,14 +44,14 @@ using namespace cv::detail;
 
 std::mutex cout_mutex;
 
-std::string base = "6cam";
-int skip_frames = 0;
+std::string base = "static";
+int skip_frames = 220;
 bool wrapAround = false;
 bool recalibrate = false;
 bool save_video = false;
-int const NUM_IMAGES = 6;
-//int offsets[NUM_IMAGES] = {0, 37, 72, 72, 37}; // static
-int offsets[NUM_IMAGES] = { 0 }; // dynamic
+int const NUM_IMAGES = 5;
+int offsets[NUM_IMAGES] = {0, 37, 72, 72, 37}; // static
+//int offsets[NUM_IMAGES] = { 0 }; // dynamic
 int const INIT_FRAME_AMT = 1;
 int const INIT_SKIPS = 0;
 int const RECALIB_DEL = 2;
@@ -81,7 +81,7 @@ void msg(String const message, double const value, int const thread_id)
 }
 void findFeatures(vector<vector<Mat>> &full_img, vector<ImageFeatures> &features,
 				  double &work_scale, double &seam_scale, double &seam_work_aspect) {
-	Ptr<cuda::ORB> d_orb = cuda::ORB::create(500, 1.2, 1);
+	Ptr<cuda::ORB> d_orb = cuda::ORB::create(1500, 1.2, 8);
 	Mat image;
 	cuda::GpuMat gpu_img;
 	cuda::GpuMat descriptors;
@@ -131,8 +131,8 @@ void matchFeatures(vector<ImageFeatures> &features, vector<MatchesInfo> &pairwis
 
 	// Match features
 	for (int i = 0; i < pairwise_matches.size(); ++i) {
-		int idx1 = (i + 1 == NUM_IMAGES) ? i-1 : i;
-		int idx2 = (i + 1 == NUM_IMAGES) ? 0 : i+1;
+		int idx1 = (i + 1 == NUM_IMAGES) ? i - 1 : i;
+		int idx2 = (i + 1 == NUM_IMAGES) ? 0 : i + 1;
 		ImageFeatures f1 = features[idx1];
 		ImageFeatures f2 = features[idx2];
 		vector<vector<DMatch>> matches;
@@ -165,11 +165,12 @@ void matchFeatures(vector<ImageFeatures> &features, vector<MatchesInfo> &pairwis
 
 		// Find number of inliers
 		pairwise_matches[i].num_inliers = 0;
-		for (size_t i = 0; i < pairwise_matches[i].inliers_mask.size(); ++i)
-			if (pairwise_matches[i].inliers_mask[i])
-				pairwise_matches[i].num_inliers++;
 
-		// Confidence calculation copied from opencv feature matching code
+		for (int j = 0; j < pairwise_matches[i].inliers_mask.size(); ++j) {
+			if (pairwise_matches[i].inliers_mask[j])
+				pairwise_matches[i].num_inliers++;
+		}
+
 		// These coeffs are from paper M. Brown and D. Lowe. "Automatic Panoramic Image Stitching
 		// using Invariant Features"
 		pairwise_matches[i].confidence = pairwise_matches[i].num_inliers / (8 + 0.3 * pairwise_matches[i].matches.size());
@@ -474,21 +475,21 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, vector<MatchesInfo> &pairwise_matches, vector<cuda::GpuMat> &x_mesh, vector<cuda::GpuMat> &y_mesh,
 					   vector<cuda::GpuMat> &x_maps, vector<cuda::GpuMat> &y_maps, double compose_scale) {
 	int64 t = getTickCount();
-	int N = 10;
-	int M = 10;
+	int N = 2;
+	int M = 2;
 	vector<Size> mesh_size(full_imgs.size());
 	vector<Mat> images(full_imgs.size());
 	vector<Mat> mesh_cpu_x(full_imgs.size(), Mat(N, M, CV_32FC1));
 	vector<Mat> mesh_cpu_y(full_imgs.size(), Mat(N, M, CV_32FC1));
 	cuda::GpuMat small_mesh_x;
 	cuda::GpuMat small_mesh_y;
-	Mat x_map;
-	Mat y_map;
+	vector<Mat> x_map(full_imgs.size());
+	vector<Mat> y_map(full_imgs.size());
 	for (int idx = 0; idx < full_imgs.size(); ++idx) {
 		resize(full_imgs[idx], images[idx], Size(), compose_scale, compose_scale);
-		x_maps[idx].download(x_map);
-		y_maps[idx].download(y_map);
-		remap(images[idx], images[idx], x_map, y_map, INTER_LINEAR);
+		x_maps[idx].download(x_map[idx]);
+		y_maps[idx].download(y_map[idx]);
+		remap(images[idx], images[idx], x_map[idx], y_map[idx], INTER_LINEAR);
 		mesh_size[idx] = images[idx].size();
 		x_mesh[idx] = cuda::GpuMat(mesh_size[idx], CV_32FC1);
 		y_mesh[idx] = cuda::GpuMat(mesh_size[idx], CV_32FC1);
@@ -523,14 +524,36 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, v
 		}
 	}
 
+	// Photometric term from http://www.liushuaicheng.org/CVPR2017/DirectPhotometric.pdf
+	int LEVELS = 1;
+	int dist = 3;
+	vector<Mat> hor_grad(images.size());
+	vector<Mat> ver_grad(images.size());
+	vector<Mat> scaled_imgs(images.size());
+	//Ptr<Filter> hor_filter = cuda::createSobelFilter(CV_8UC3, CV_8UC3, 1, 0);
+	//Ptr<Filter> ver_filter = cuda::createSobelFilter(CV_8UC3, CV_8UC3, 0, 1);
+	for (int level = LEVELS; level > 0; --level) {
+		for (int i = 0; i < images.size(); ++i) {
+			resize(images[i], scaled_imgs[i], Size(), pow(2, -level), pow(2, -level));
+			Sobel(scaled_imgs[i], hor_grad[i], CV_8UC3, 1, 0);
+			Sobel(scaled_imgs[i], ver_grad[i], CV_8UC3, 0, 1);
+		}
+		//for (int y = 0; y < scaled_imgs[i].rows; y+=dist) {
+		//	for (int x = 0; x < scaled_imgs[i].cols; x+=dist) {
+		//	}
+		//}
+	}
+
+	// Local alignment term from http://web.cecs.pdx.edu/~fliu/papers/cvpr2014-stitching.pdf
 	for (int idx = 0; idx < pairwise_matches.size(); ++idx) {
 		int src = pairwise_matches[idx].src_img_idx;
 		int dst = pairwise_matches[idx].dst_img_idx;
 		for (int i = 0; i < pairwise_matches[idx].matches.size(); ++i) {
-			//pairwise_matches[idx].
+
 		}
 	}
 	
+	// Global alignment term from http://web.cecs.pdx.edu/~fliu/papers/cvpr2014-stitching.pdf
 	float a = alphas[0];
 	int row = 0;
 	for (int idx = 0; idx < images.size(); ++idx) {
@@ -547,6 +570,8 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, v
 			}
 		}
 	}
+
+	// Smoothness term from http://web.cecs.pdx.edu/~fliu/papers/cvpr2014-stitching.pdf
 	a = alphas[1];
 	for (int idx = 0; idx < images.size(); ++idx) {
 		for (int i = 0; i < N-1; ++i) {
