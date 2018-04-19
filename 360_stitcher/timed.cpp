@@ -160,25 +160,24 @@ void matchFeatures(vector<ImageFeatures> &features, vector<MatchesInfo> &pairwis
 		pairwise_matches[i].src_img_idx = idx1;
 		pairwise_matches[i].dst_img_idx = idx2;
 
-		// Find pair-wise motion
-		pairwise_matches[i].H = findHomography(src_points, dst_points, pairwise_matches[i].inliers_mask, RANSAC);
+		if (pairwise_matches[i].matches.size()) {
+			// Find pair-wise motion
+			pairwise_matches[i].H = findHomography(src_points, dst_points, pairwise_matches[i].inliers_mask, RANSAC);
+			// Find number of inliers
+			pairwise_matches[i].num_inliers = 0;
+			for (size_t i = 0; i < pairwise_matches[i].inliers_mask.size(); ++i)
+				if (pairwise_matches[i].inliers_mask[i])
+					pairwise_matches[i].num_inliers++;
 
-		// Find number of inliers
-		pairwise_matches[i].num_inliers = 0;
+			// Confidence calculation copied from opencv feature matching code
+			// These coeffs are from paper M. Brown and D. Lowe. "Automatic Panoramic Image Stitching
+			// using Invariant Features"
+			pairwise_matches[i].confidence = pairwise_matches[i].num_inliers / (8 + 0.3 * pairwise_matches[i].matches.size());
 
-		for (int j = 0; j < pairwise_matches[i].inliers_mask.size(); ++j) {
-			if (pairwise_matches[i].inliers_mask[j])
-				pairwise_matches[i].num_inliers++;
+			// Set zero confidence to remove matches between too close images, as they don't provide
+			// additional information anyway. The threshold was set experimentally.
+			pairwise_matches[i].confidence = pairwise_matches[i].confidence > 3. ? 0. : pairwise_matches[i].confidence;
 		}
-
-		// These coeffs are from paper M. Brown and D. Lowe. "Automatic Panoramic Image Stitching
-		// using Invariant Features"
-		pairwise_matches[i].confidence = pairwise_matches[i].num_inliers / (8 + 0.3 * pairwise_matches[i].matches.size());
-
-		// Set zero confidence to remove matches between too close images, as they don't provide
-		// additional information anyway. The threshold was set experimentally.
-		pairwise_matches[i].confidence = pairwise_matches[i].confidence > 3. ? 0. : pairwise_matches[i].confidence;
-
 		pairwise_matches[i].confidence = 1;
 	}
 
@@ -475,8 +474,8 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, vector<MatchesInfo> &pairwise_matches, vector<cuda::GpuMat> &x_mesh, vector<cuda::GpuMat> &y_mesh,
 					   vector<cuda::GpuMat> &x_maps, vector<cuda::GpuMat> &y_maps, double compose_scale) {
 	int64 t = getTickCount();
-	int N = 2;
-	int M = 2;
+	int N = 10;
+	int M = 10;
 	vector<Size> mesh_size(full_imgs.size());
 	vector<Mat> images(full_imgs.size());
 	vector<Mat> mesh_cpu_x(full_imgs.size(), Mat(N, M, CV_32FC1));
@@ -535,8 +534,8 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, v
 	for (int level = LEVELS; level > 0; --level) {
 		for (int i = 0; i < images.size(); ++i) {
 			resize(images[i], scaled_imgs[i], Size(), pow(2, -level), pow(2, -level));
-			Sobel(scaled_imgs[i], hor_grad[i], CV_8UC3, 1, 0);
-			Sobel(scaled_imgs[i], ver_grad[i], CV_8UC3, 0, 1);
+			//Sobel(scaled_imgs[i], hor_grad[i], CV_8UC3, 1, 0);
+			//Sobel(scaled_imgs[i], ver_grad[i], CV_8UC3, 0, 1);
 		}
 		//for (int y = 0; y < scaled_imgs[i].rows; y+=dist) {
 		//	for (int x = 0; x < scaled_imgs[i].cols; x+=dist) {
@@ -629,7 +628,7 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, v
 				mesh_cpu_y[idx].at<float>(i, j) = x(2 * (j + i*M + idx*M*N) + 1);
 			}
 		}
-		resize(mesh_cpu_x[idx], big_mesh_x, mesh_size[idx]);
+		/*resize(mesh_cpu_x[idx], big_mesh_x, mesh_size[idx]);
 		resize(mesh_cpu_y[idx], big_mesh_y, mesh_size[idx]);
 		std::cout << mesh_cpu_y[idx] << std::endl;
 		Mat warp_x(mesh_size[idx].height, mesh_size[idx].width, mesh_cpu_x[idx].type());
@@ -649,9 +648,12 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, v
 				if (!warp_x.at<float>(i, j)) {
 				}
 			}
-		}
-		x_mesh[idx].upload(warp_x);
-		y_mesh[idx].upload(warp_y);
+		}*/
+		std::cout << mesh_cpu_x[idx] << std::endl;
+		gpu_small_mesh_x.upload(mesh_cpu_x[idx]);
+		gpu_small_mesh_y.upload(mesh_cpu_y[idx]);
+		cuda::resize(gpu_small_mesh_x, x_mesh[idx], mesh_size[idx]);
+		cuda::resize(gpu_small_mesh_y, y_mesh[idx], mesh_size[idx]);
 		//cuda::max(x_mesh[idx], Scalar(0), x_mesh[idx]);
 		//cuda::min(x_mesh[idx], Scalar(x_mesh[idx].cols), x_mesh[idx]);
 		//cuda::max(y_mesh[idx], Scalar(0), y_mesh[idx]);
@@ -748,7 +750,7 @@ void stitch_online(double compose_scale, Mat &img, cuda::GpuMat &x_map, cuda::Gp
 	gc->apply_gpu(img_num, Point(), images[img_num], cuda::GpuMat());
 
 	// Warp the image according to a mesh
-	cuda::remap(images[img_num], images[img_num], x_mesh, y_mesh, INTER_LINEAR, BORDER_CONSTANT, Scalar(0), stream);
+	cuda::remap(images[img_num], images[img_num], x_mesh, y_mesh, INTER_LINEAR, BORDER_REFLECT, Scalar(), stream);
 	
 	//filter->apply(images[img_num], images[img_num], stream);
 	if (img_num == printing) {
