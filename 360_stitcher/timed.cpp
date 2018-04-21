@@ -548,7 +548,7 @@ void stitch_online(double compose_scale, Mat &img, cuda::GpuMat &x_map, cuda::Gp
 		// Warp using existing maps
 		cuda::remap(full_imgs[img_num], images[img_num], x_map, y_map, INTER_LINEAR, BORDER_REFLECT, Scalar(), stream);
 	}
-	gc->apply_gpu(img_num, Point(), images[img_num], cuda::GpuMat());
+	images[img_num].convertTo(images[img_num], images[img_num].type(), gc->gains()[img_num]);
 	
 	if (img_num == printing) {
 		times[3] = std::chrono::high_resolution_clock::now();
