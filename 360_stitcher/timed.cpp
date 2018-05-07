@@ -46,7 +46,7 @@ std::mutex cout_mutex;
 
 std::string base = "static";
 int skip_frames = 220;
-bool wrapAround = false;
+bool wrapAround = true;
 bool recalibrate = false;
 bool save_video = false;
 int const NUM_IMAGES = 5;
@@ -81,7 +81,8 @@ void msg(String const message, double const value, int const thread_id)
 }
 void findFeatures(vector<vector<Mat>> &full_img, vector<ImageFeatures> &features,
 				  double &work_scale, double &seam_scale, double &seam_work_aspect) {
-	Ptr<cuda::ORB> d_orb = cuda::ORB::create(1500, 1.2, 8);
+	//Ptr<cuda::ORB> d_orb = cuda::ORB::create(1500, 1.2, 8);
+    Ptr<SurfFeaturesFinderGpu> surf = makePtr<SurfFeaturesFinderGpu>();
 	Mat image;
 	cuda::GpuMat gpu_img;
 	cuda::GpuMat descriptors;
@@ -105,21 +106,22 @@ void findFeatures(vector<vector<Mat>> &full_img, vector<ImageFeatures> &features
 			seam_scale = min(1.0, sqrt(SEAM_MEAGPIX * 1e6 / full_img[j][i].size().area()));
 			seam_work_aspect = seam_scale / work_scale;
 
-			gpu_img.upload(image);
-			cuda::cvtColor(gpu_img, gpu_img, CV_BGR2GRAY);
+			//gpu_img.upload(image);
+			//cuda::cvtColor(gpu_img, gpu_img, CV_BGR2GRAY);
 			// Find features with SURF feature finder
+            (*surf)(image, features[i]);
 			if (!j) {
-				features[i].img_size = image.size();
-				d_orb->detectAndCompute(gpu_img, noArray(), features[i].keypoints, descriptors);
-				descriptors.download(features[i].descriptors);
+				//features[i].img_size = image.size();
+				//d_orb->detectAndCompute(gpu_img, noArray(), features[i].keypoints, descriptors);
+				//descriptors.download(features[i].descriptors);
 			} else {
-				ImageFeatures ft;
-				UMat cpu_descriptors;
-				d_orb->detectAndCompute(gpu_img, noArray(), ft.keypoints, descriptors);
-				descriptors.download(ft.descriptors);
-				features[i].keypoints.insert(features[i].keypoints.end(), ft.keypoints.begin(), ft.keypoints.end());
-				vconcat(features[i].descriptors, ft.descriptors, cpu_descriptors);
-				features[i].descriptors = cpu_descriptors;
+				//ImageFeatures ft;
+				//UMat cpu_descriptors;
+				//d_orb->detectAndCompute(gpu_img, noArray(), ft.keypoints, descriptors);
+				//descriptors.download(ft.descriptors);
+				//features[i].keypoints.insert(features[i].keypoints.end(), ft.keypoints.begin(), ft.keypoints.end());
+				//vconcat(features[i].descriptors, ft.descriptors, cpu_descriptors);
+				//features[i].descriptors = cpu_descriptors;
 			}
 			features[i].img_idx = i;
 		}
@@ -127,6 +129,9 @@ void findFeatures(vector<vector<Mat>> &full_img, vector<ImageFeatures> &features
 }
 
 void matchFeatures(vector<ImageFeatures> &features, vector<MatchesInfo> &pairwise_matches) {
+    Ptr<FeaturesMatcher> fm = makePtr<BestOf2NearestMatcher>(true);
+    (*fm)(features, pairwise_matches);
+    return;
 	Ptr<DescriptorMatcher> dm = DescriptorMatcher::create("BruteForce-Hamming");
 
 	// Match features
@@ -455,7 +460,12 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 		dilation_filter->apply(gpu_masks_warped[img_idx], gpu_seam_mask);
 		cuda::resize(gpu_seam_mask, gpu_seam_mask, gpu_mask_warped.size(), 0.0, 0.0, 1);
 		cuda::bitwise_and(gpu_seam_mask, gpu_mask_warped, gpu_mask_warped, noArray());
-
+        if (img_idx == 1) {
+            //gpu_mask_warped.setTo(Scalar::all(255));
+        }
+        else {
+            //gpu_mask_warped.setTo(Scalar::all(0));
+        }
 		// Blend the current image
 		mb->init_gpu(gpu_img, gpu_mask_warped, corners[img_idx]);
 	}
@@ -472,7 +482,7 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 
 
 void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, vector<MatchesInfo> &pairwise_matches, vector<cuda::GpuMat> &x_mesh, vector<cuda::GpuMat> &y_mesh,
-					   vector<cuda::GpuMat> &x_maps, vector<cuda::GpuMat> &y_maps, double compose_scale) {
+					   vector<cuda::GpuMat> &x_maps, vector<cuda::GpuMat> &y_maps, float focal_length, double compose_scale) {
 	int64 t = getTickCount();
 	int N = 10;
 	int M = 10;
@@ -484,6 +494,7 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, v
 	cuda::GpuMat small_mesh_y;
 	vector<Mat> x_map(full_imgs.size());
 	vector<Mat> y_map(full_imgs.size());
+
 	for (int idx = 0; idx < full_imgs.size(); ++idx) {
 		resize(full_imgs[idx], images[idx], Size(), compose_scale, compose_scale);
 		x_maps[idx].download(x_map[idx]);
@@ -498,30 +509,13 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, v
 				mesh_cpu_y[idx].at<float>(i, j) = i * mesh_size[idx].height / (N-1);
 			}
 		}
-		//std::cout << mesh_cpu_x[idx] << std::endl;
-		small_mesh_x.upload(mesh_cpu_x[idx]);
-		small_mesh_y.upload(mesh_cpu_y[idx]);
-		cuda::resize(small_mesh_x, x_mesh[idx], mesh_size[idx]);
-		cuda::resize(small_mesh_y, y_mesh[idx], mesh_size[idx]);
 	}
-	int num_rows = 2 * images.size()*N*M + 2*images.size()*(N-1)*(M-1);
+
+	int num_rows = 2 * images.size()*N*M + 2*images.size()*(N-1)*(M-1) + pairwise_matches.size() * 10;
 	Eigen::SparseMatrix<double> A(num_rows, 2*N*M*images.size());
 	Eigen::VectorXd b(num_rows), x;
 	float alphas[2] = {0.01, 0.001};
 	b.fill(0);
-
-	vector<float> a0(N-1, M-1);
-	vector<float> a1(N-1, M-1);
-	vector<float> a2(N-1, M-1);
-	vector<float> a3(N-1, M-1);
-	for (int i = 0; i < N - 1; ++i) {
-		for (int j = 0; j < M - 1; ++j) {
-			float x1 = j * images[0].cols / M;
-			float x2 = (j+1) * images[0].cols / M;
-			float y1 = i * images[0].rows / N;
-			float y2 = (i+1) * images[0].rows / N;
-		}
-	}
 
 	// Photometric term from http://www.liushuaicheng.org/CVPR2017/DirectPhotometric.pdf
 	int LEVELS = 1;
@@ -543,14 +537,6 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, v
 		//}
 	}
 
-	// Local alignment term from http://web.cecs.pdx.edu/~fliu/papers/cvpr2014-stitching.pdf
-	for (int idx = 0; idx < pairwise_matches.size(); ++idx) {
-		int src = pairwise_matches[idx].src_img_idx;
-		int dst = pairwise_matches[idx].dst_img_idx;
-		for (int i = 0; i < pairwise_matches[idx].matches.size(); ++i) {
-
-		}
-	}
 	
 	// Global alignment term from http://web.cecs.pdx.edu/~fliu/papers/cvpr2014-stitching.pdf
 	float a = alphas[0];
@@ -591,75 +577,167 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, v
 				float v = (-dx*y1+dx*y2+x1*dy-x2*dy)/(dx*dx+dy*dy);
 				float u2 = (dx2*x2-dx2*x3+dy2*y2-dy2*y3)/(dx2*dx2+dy2*dy2);
 				float v2 = (-dx2*y2+dx2*y3+x2*dy2-x3*dy2)/(dx2*dx2+dy2*dy2);
-				A.insert(row, 2*(j + M * i + M*N*idx)) = a; // x1
-				A.insert(row, 2*(j + M * i + M*N*idx) + 1) = a; // y1
-				A.insert(row, 2*(j + M * (i+1) + M*N*idx)) = a*(u + v - 1); // x2
-				A.insert(row, 2*(j + M * (i+1) + M*N*idx) + 1) = a*(u - v - 1); // y2
-				A.insert(row, 2*(j+1 + M * i + M*N*idx)) = a*(-u - v); // x3
-				A.insert(row, 2*(j+1 + M * i + M*N*idx) + 1) = a*(-u + v); // y3
-				//A.insert(row+1, 2*(j + M * (i+1) + M*N*idx)) = 1; // x2
-				//A.insert(row+1, 2*(j + M * (i+1) + M*N*idx) + 1) = 1; // y2
-				//A.insert(row+1, 2*(j+1 + M * i + M*N*idx)) = u + v - 1; // x3
-				//A.insert(row+1, 2*(j+1 + M * i + M*N*idx) + 1) = u - v - 1; // y3
-				//A.insert(row+1, 2*(j+1 + M * (i+1) + M*N*idx)) = -u - v; // x4
-				//A.insert(row+1, 2*(j+1 + M * (i+1) + M*N*idx) + 1) = -u + v; // x4
+				A.insert(row,   2*(j + M * i + M*N*idx)) = a; // x1
+				A.insert(row,   2*(j + M * i + M*N*idx) + 1) = a; // y1
+				A.insert(row,   2*(j + M * (i+1) + M*N*idx)) = a*(u + v - 1); // x2
+				A.insert(row,   2*(j + M * (i+1) + M*N*idx) + 1) = a*(u - v - 1); // y2
+				A.insert(row,   2*(j+1 + M * i + M*N*idx)) = a*(-u - v); // x3
+				A.insert(row,   2*(j+1 + M * i + M*N*idx) + 1) = a*(-u + v); // y3
+
+				A.insert(row+1, 2*(j + M * (i+1) + M*N*idx)) = a; // x2
+				A.insert(row+1, 2*(j + M * (i+1) + M*N*idx) + 1) = a; // y2
+				A.insert(row+1, 2*(j+1 + M * i + M*N*idx)) = a*(u + v - 1); // x3
+				A.insert(row+1, 2*(j+1 + M * i + M*N*idx) + 1) = a*(u - v - 1); // y3
+				A.insert(row+1, 2*(j+1 + M * (i+1) + M*N*idx)) = a*(-u - v); // x4
+				A.insert(row+1, 2*(j+1 + M * (i+1) + M*N*idx) + 1) = a*(-u + v); // x4
 				row += 2;
 			}
 		}
 	}
+
+	// Local alignment term from http://web.cecs.pdx.edu/~fliu/papers/cvpr2014-stitching.pdf
+    float f = focal_length;
+	for (int idx = 0; idx < pairwise_matches.size(); ++idx) {
+        MatchesInfo &pw_matches = pairwise_matches[idx];
+        if (pw_matches.confidence < 0.7) continue;
+        if (!pw_matches.matches.size()) continue;
+		int src = pw_matches.src_img_idx;
+		int dst = pw_matches.dst_img_idx;
+		for (int i = 0; i < 10; ++i) {
+			int idx = rand() % pw_matches.matches.size();
+			int idx1 = pw_matches.matches[idx].queryIdx;
+			int idx2 = pw_matches.matches[idx].trainIdx;
+			KeyPoint k1 = features[src].keypoints[idx1];
+			KeyPoint k2 = features[dst].keypoints[idx2];
+			float x1 = k1.pt.x - features[src].img_size.width / 2;
+			float y1 = k1.pt.y - features[src].img_size.height / 2;
+			float x2 = k2.pt.x - features[dst].img_size.width / 2;
+			float y2 = k2.pt.y - features[dst].img_size.height / 2;
+            float theta = dst - src;
+            if (src == 0 && dst == NUM_IMAGES - 1 && wrapAround) {
+                theta = -1;
+            }
+            theta *= 2 * PI / 6;
+
+            float h1 = features[src].img_size.height;
+            float w1 = features[src].img_size.width;
+            float h2 = features[dst].img_size.height;
+            float w2 = features[dst].img_size.width;
+
+            float x1_ = f * atan(x1 / f) + w1 / 2;
+            float x2_ = f * (theta + atan(x2 / f)) + w2 / 2;
+            float xo2_ = f * atan(x2 / f) + w2 / 2;
+            float y1_ = f * y1 / sqrt(x1*x1 + f*f) + h1 / 2;
+            float y2_ = f * y2 / sqrt(x2*x2 + f*f) + h2 / 2;
+
+            int t1 = floor(y1_ * (N-1) / h1);
+            int t2 = floor(y2_ * (N-1) / h2);
+            int l1 = floor(x1_ * (M-1) / w1);
+            int l2 = floor(xo2_ * (M-1) / w2);
+            float top1 = t1 * h1 / N;
+            float bot1 = top1 + h1 / N; // (t1+1) * h1 / N
+            float left1 = l1 * w1 / M;
+            float right1 = left1 + w1 / M; // (l1+1) * w1 / M
+            float top2 = t2 * h2 / N;
+            float bot2 = top2 + h2 / N; // (t2+1) * h2 / N
+            float left2 = l2 * w2 / M;
+            float right2 = left2 + w2 / M; // (l2+1) * w2 / M
+
+            float u1 = (x1_ - right1) / (right1 - left1);
+            float u2 = (x1_ - right2) / (right2 - left2);
+            float v1 = (y1_ - top1) / (bot1 - top1);
+            float v2 = (y1_ - top1) / (bot2 - top2);
+
+            A.insert(row, 2*(l1   + M * (t1)   + M*N*src)) = (1-u1)*(1-v1);
+            A.insert(row, 2*(l1+1 + M * (t1)   + M*N*src)) = u1*(1-v1);
+            A.insert(row, 2*(l1 +   M * (t1+1) + M*N*src)) = v1*(1-u1);
+            A.insert(row, 2*(l1+1 + M * (t1+1) + M*N*src)) = u1*v1;
+            A.insert(row, 2*(l2   + M * (t2)   + M*N*dst)) = -(1-u2)*(1-v2);
+            A.insert(row, 2*(l2+1 + M * (t2)   + M*N*dst)) = -u2*(1-v2);
+            A.insert(row, 2*(l2 +   M * (t2+1) + M*N*dst)) = -v2*(1-u2);
+            A.insert(row, 2*(l2+1 + M * (t2+1) + M*N*dst)) = -u2*v2;
+
+            A.insert(row, 2*(l1   + M * (t1)   + M*N*src)+1) = (1-u1)*(1-v1);
+            A.insert(row, 2*(l1+1 + M * (t1)   + M*N*src)+1) = u1*(1-v1);
+            A.insert(row, 2*(l1 +   M * (t1+1) + M*N*src)+1) = v1*(1-u1);
+            A.insert(row, 2*(l1+1 + M * (t1+1) + M*N*src)+1) = u1*v1;
+            A.insert(row, 2*(l2   + M * (t2)   + M*N*dst)+1) = -(1-u2)*(1-v2);
+            A.insert(row, 2*(l2+1 + M * (t2)   + M*N*dst)+1) = -u2*(1-v2);
+            A.insert(row, 2*(l2 +   M * (t2+1) + M*N*dst)+1) = -v2*(1-u2);
+            A.insert(row, 2*(l2+1 + M * (t2+1) + M*N*dst)+1) = -u2*v2;
+            row++;
+		}
+	}
+
 	Eigen::LeastSquaresConjugateGradient<Eigen::SparseMatrix<double>> solver;
 	solver.compute(A);
 	x = solver.solve(b);
-	//std::cout << x << std::endl;
-	//std::cout << " " << std::endl;
 
 	cuda::GpuMat gpu_small_mesh_x;
 	cuda::GpuMat gpu_small_mesh_y;
 	Mat big_mesh_x;
 	Mat big_mesh_y;
 	for (int idx = 0; idx < full_imgs.size(); ++idx) {
-		for (int i = 0; i < N; ++i) {
-			for (int j = 0; j < M; ++j) {
-				//mesh_cpu_x[idx].at<float>(x(2 * (j + i*M)), x(2 * (j + i*M) + 1)) = j * images[idx].size().width / M;
-				//mesh_cpu_y[idx].at<float>(x(2 * (j + i*M)), x(2 * (j + i*M) + 1)) = i * images[idx].size().height / N;
-				//mesh_cpu_x[idx].at<float>(i, j) = j * mesh_size[idx].width / (M - 1); // x(2 * (j + i * M));
-				//mesh_cpu_y[idx].at<float>(i, j) = i * mesh_size[idx].height / (N - 1); //x(2 * (j + i*M) + 1);
-				mesh_cpu_x[idx].at<float>(i, j) = x(2 * (j + i * M + idx*M*N));
-				mesh_cpu_y[idx].at<float>(i, j) = x(2 * (j + i*M + idx*M*N) + 1);
-			}
-		}
-		/*resize(mesh_cpu_x[idx], big_mesh_x, mesh_size[idx]);
-		resize(mesh_cpu_y[idx], big_mesh_y, mesh_size[idx]);
+        for (int i = 0; i < N; ++i) {
+            for (int j = 0; j < M; ++j) {
+                mesh_cpu_x[idx].at<float>(i, j) = x(2 * (j + i * M + idx*M*N));
+                mesh_cpu_y[idx].at<float>(i, j) = x(2 * (j + i*M + idx*M*N) + 1);
+            }
+        }
 		std::cout << mesh_cpu_y[idx] << std::endl;
-		Mat warp_x(mesh_size[idx].height, mesh_size[idx].width, mesh_cpu_x[idx].type());
-		Mat warp_y(mesh_size[idx].height, mesh_size[idx].width, mesh_cpu_y[idx].type());
-		for (int i = 0; i < mesh_size[idx].height; ++i) {
-			for (int j = 0; j < mesh_size[idx].width; ++j) {
-				int x = (int)big_mesh_x.at<float>(i, j);
-				int y = (int)big_mesh_y.at<float>(i, j);
-				if (x >= 0 && y >= 0 && x < mesh_size[idx].width && y < mesh_size[idx].height) {
-					warp_x.at<float>(y, x) = j;
-					warp_y.at<float>(y, x) = i;
-				}
-			}
-		}
-		for (int i = 0; i < mesh_size[idx].height; ++i) {
-			for (int j = 0; j < mesh_size[idx].width; ++j) {
-				if (!warp_x.at<float>(i, j)) {
-				}
-			}
-		}*/
-		std::cout << mesh_cpu_x[idx] << std::endl;
-		gpu_small_mesh_x.upload(mesh_cpu_x[idx]);
-		gpu_small_mesh_y.upload(mesh_cpu_y[idx]);
-		cuda::resize(gpu_small_mesh_x, x_mesh[idx], mesh_size[idx]);
-		cuda::resize(gpu_small_mesh_y, y_mesh[idx], mesh_size[idx]);
-		//cuda::max(x_mesh[idx], Scalar(0), x_mesh[idx]);
-		//cuda::min(x_mesh[idx], Scalar(x_mesh[idx].cols), x_mesh[idx]);
-		//cuda::max(y_mesh[idx], Scalar(0), y_mesh[idx]);
-		//cuda::min(y_mesh[idx], Scalar(y_mesh[idx].rows), y_mesh[idx]);
+        if (true) {
+            bool debug = true;
+            if (debug) {
+                Mat mat(mesh_size[idx].height, mesh_size[idx].width, CV_16UC3);
+                for (int i = 0; i < mesh_cpu_x[idx].rows - 1; ++i) {
+                    for (int j = 0; j < mesh_cpu_x[idx].cols; ++j) {
+                        Point start = Point(mesh_cpu_x[idx].at<float>(i, j), mesh_cpu_y[idx].at<float>(i, j));
+                        Point end = Point(mesh_cpu_x[idx].at<float>(i + 1, j), mesh_cpu_y[idx].at<float>(i + 1, j));
+                        line(mat, start, end, Scalar(1, 0, 0), 3);
+                    }
+                }
+                for (int i = 0; i < mesh_cpu_x[idx].rows; ++i) {
+                    for (int j = 0; j < mesh_cpu_x[idx].cols - 1; ++j) {
+                        Point start = Point(mesh_cpu_x[idx].at<float>(i, j), mesh_cpu_y[idx].at<float>(i, j));
+                        Point end = Point(mesh_cpu_x[idx].at<float>(i, j + 1), mesh_cpu_y[idx].at<float>(i, j + 1));
+                        line(mat, start, end, Scalar(1, 0, 0), 3);
+                    }
+                }
+                imshow("Asaas", mat);
+                waitKey();
+            }
+            // Treat the calculated values as a forward map.
+            // This means they have to be converted to a backward map.
+            resize(mesh_cpu_x[idx], big_mesh_x, mesh_size[idx]);
+            resize(mesh_cpu_y[idx], big_mesh_y, mesh_size[idx]);
+            Mat warp_x(mesh_size[idx].height / 2, mesh_size[idx].width / 2, mesh_cpu_x[idx].type());
+            Mat warp_y(mesh_size[idx].height / 2, mesh_size[idx].width / 2, mesh_cpu_y[idx].type());
+            for (int i = 0; i < mesh_size[idx].height; ++i) {
+                for (int j = 0; j < mesh_size[idx].width; ++j) {
+                    int x = (int)big_mesh_x.at<float>(i, j) / 2;
+                    int y = (int)big_mesh_y.at<float>(i, j) / 2;
+                    if (x > 0 && y > 0 && x < warp_x.cols && y < warp_x.rows) {
+                        warp_x.at<float>(y, x) = (float)j;
+                        warp_y.at<float>(y, x) = (float)i;
+                    }
+                }
+            }
+            resize(warp_x, big_mesh_x, mesh_size[idx]);
+            resize(warp_y, big_mesh_y, mesh_size[idx]);
+            x_mesh[idx].upload(big_mesh_x);
+            y_mesh[idx].upload(big_mesh_y);
+        } else {
+            // Treat the calculated values as a backward map
+            gpu_small_mesh_x.upload(mesh_cpu_x[idx]);
+            gpu_small_mesh_y.upload(mesh_cpu_y[idx]);
+            cuda::resize(gpu_small_mesh_x, x_mesh[idx], mesh_size[idx]);
+            cuda::resize(gpu_small_mesh_y, y_mesh[idx], mesh_size[idx]);
+            x_mesh[idx].adjustROI(0, -mesh_size[idx].height / N, 0, -mesh_size[idx].width / M);
+            y_mesh[idx].adjustROI(0, -mesh_size[idx].height / N, 0, -mesh_size[idx].width / M);
+            cuda::resize(x_mesh[idx], x_mesh[idx], mesh_size[idx]);
+            cuda::resize(y_mesh[idx], y_mesh[idx], mesh_size[idx]);
+        }
 	}
-	int sis = 0;
 }
 
 
@@ -703,13 +781,14 @@ bool stitch_calib(vector<vector<Mat>> full_img, vector<CameraParams> &cameras, v
 			   x_maps, y_maps, compose_scale, warped_image_scale, blend_width);
 	times[3] = std::chrono::high_resolution_clock::now();
 
-	calibrateMeshWarp(full_img[full_img.size()-1], features, pairwise_matches, x_mesh, y_mesh, x_maps, y_maps, compose_scale);
+	calibrateMeshWarp(full_img[full_img.size()-1], features, pairwise_matches, x_mesh, y_mesh, x_maps, y_maps, cameras[0].focal, compose_scale);
 	times[4] = std::chrono::high_resolution_clock::now();
 	return true;
 }
 
 vector<cuda::GpuMat> full_imgs(NUM_IMAGES);
 vector<cuda::GpuMat> images(NUM_IMAGES);
+vector<cuda::GpuMat> warped_images(NUM_IMAGES);
 Ptr<cuda::Filter> filter = cuda::createGaussianFilter(CV_8UC3, CV_8UC3, Size(5, 5), 15);
 int printing = 0;
 // Online stitching fuction, which resizes if necessary, remaps to 3D and uses the stripped version of feed function
@@ -740,17 +819,17 @@ void stitch_online(double compose_scale, Mat &img, cuda::GpuMat &x_map, cuda::Gp
 		}
 
 		// Warp using existing maps
-		cuda::remap(images[img_num], images[img_num], x_map, y_map, INTER_LINEAR, BORDER_REFLECT, Scalar(), stream);
+		cuda::remap(images[img_num], images[img_num], x_map, y_map, INTER_LINEAR, BORDER_CONSTANT, Scalar(0), stream);
 	}
 	else
 	{
 		// Warp using existing maps
-		cuda::remap(full_imgs[img_num], images[img_num], x_map, y_map, INTER_LINEAR, BORDER_REFLECT, Scalar(), stream);
+		cuda::remap(full_imgs[img_num], images[img_num], x_map, y_map, INTER_LINEAR, BORDER_CONSTANT, Scalar(0), stream);
 	}
 	gc->apply_gpu(img_num, Point(), images[img_num], cuda::GpuMat());
 
 	// Warp the image according to a mesh
-	cuda::remap(images[img_num], images[img_num], x_mesh, y_mesh, INTER_LINEAR, BORDER_REFLECT, Scalar(), stream);
+	cuda::remap(images[img_num], warped_images[img_num], x_mesh, y_mesh, INTER_LINEAR, BORDER_CONSTANT, Scalar(0), stream);
 	
 	//filter->apply(images[img_num], images[img_num], stream);
 	if (img_num == printing) {
@@ -758,7 +837,7 @@ void stitch_online(double compose_scale, Mat &img, cuda::GpuMat &x_map, cuda::Gp
 	}
 	
 	// Calculate pyramids for blending
-	mb->feed_online(images[img_num], img_num, stream);
+	mb->feed_online(warped_images[img_num], img_num, stream);
 
 	if (img_num == printing) {
 		times[4] = std::chrono::high_resolution_clock::now();
