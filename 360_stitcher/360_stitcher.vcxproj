@@ -90,7 +90,7 @@
       <AdditionalIncludeDirectories>C:\Local\kattaine\Programs\customcv\custombuild\install\include;C:\Local\kattaine\Data\Stitcher\360_stitcher\external</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
-      <AdditionalLibraryDirectories>C:\Local\kattaine\Programs\customcv\custombuild\lib\Debug</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>C:\Local\kattaine\Programs\customcv\oldbuild\lib\Debug</AdditionalLibraryDirectories>
       <AdditionalDependencies>opencv_calib3d340d.lib;opencv_core340d.lib;opencv_cudaarithm340d.lib;opencv_xfeatures2d340d.lib;opencv_cudabgsegm340d.lib;opencv_cudacodec340d.lib;opencv_cudafeatures2d340d.lib;opencv_cudafilters340d.lib;opencv_cudaimgproc340d.lib;opencv_cudalegacy340d.lib;opencv_cudaoptflow340d.lib;opencv_cudastereo340d.lib;opencv_cudawarping340d.lib;opencv_cudev340d.lib;opencv_dnn340d.lib;opencv_features2d340d.lib;opencv_flann340d.lib;opencv_highgui340d.lib;opencv_imgcodecs340d.lib;opencv_imgproc340d.lib;opencv_ml340d.lib;opencv_objdetect340d.lib;opencv_photo340d.lib;opencv_shape340d.lib;opencv_stitching340d.lib;opencv_superres340d.lib;opencv_video340d.lib;opencv_videoio340d.lib;opencv_videostab340d.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
