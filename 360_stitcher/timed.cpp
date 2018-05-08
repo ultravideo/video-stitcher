@@ -59,7 +59,7 @@ double const WORK_MEGAPIX = 0.6;	//0.6;	//-1			// Megapix parameter is scaled to
 double const SEAM_MEAGPIX = 0.01;							// of pixels in full image and this is used
 double const COMPOSE_MEGAPIX = 1.4;	//1.4;	//2.2;	//-1	// as a scaling factor when resizing images
 float const MATCH_CONF = 0.5f;
-float const CONF_THRESH = 0.5f;
+float const CONF_THRESH = 0.95f;
 int const BLEND_TYPE = Blender::MULTI_BAND;					// Feather blending leaves ugly seams
 float const BLEND_STRENGTH = 5;
 int const HESS_THRESH = 300;
@@ -187,11 +187,12 @@ void matchFeatures(vector<ImageFeatures> &features, vector<MatchesInfo> &pairwis
 	}
 
 }
-bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pairwise_matches, vector<CameraParams> &cameras, float &warped_image_scale) {
+bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pairwise_matches,
+                      vector<CameraParams> &cameras, float &warped_image_scale) {
 	cameras = vector<CameraParams>(NUM_IMAGES);
 	//estimateFocal(features, pairwise_matches, focals);
 	for (int i = 0; i < cameras.size(); ++i) {
-		double rot = 2 * PI * (i) / 6;
+		double rot = 2 * PI * (i+2) / 6;
 		Mat rotMat(3, 3, CV_32F);
 		double L[3] = {cos(rot), 0, sin(rot)};
 		double u[3] = {0, 1, 0};
@@ -482,7 +483,7 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 
 
 void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, vector<MatchesInfo> &pairwise_matches, vector<cuda::GpuMat> &x_mesh, vector<cuda::GpuMat> &y_mesh,
-					   vector<cuda::GpuMat> &x_maps, vector<cuda::GpuMat> &y_maps, float focal_length, double compose_scale) {
+					   vector<cuda::GpuMat> &x_maps, vector<cuda::GpuMat> &y_maps, float focal_length, double compose_scale, double work_scale) {
 	int64 t = getTickCount();
 	int N = 10;
 	int M = 10;
@@ -511,7 +512,7 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, v
 		}
 	}
 
-	int num_rows = 2 * images.size()*N*M + 2*images.size()*(N-1)*(M-1) + pairwise_matches.size() * 10;
+	int num_rows = 2 * images.size()*N*M + 2*images.size()*(N-1)*(M-1) + 2 * pairwise_matches.size() * 10;
 	Eigen::SparseMatrix<double> A(num_rows, 2*N*M*images.size());
 	Eigen::VectorXd b(num_rows), x;
 	float alphas[2] = {0.01, 0.001};
@@ -599,73 +600,95 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, v
     float f = focal_length;
 	for (int idx = 0; idx < pairwise_matches.size(); ++idx) {
         MatchesInfo &pw_matches = pairwise_matches[idx];
-        if (pw_matches.confidence < 0.7) continue;
+        if (pw_matches.confidence < CONF_THRESH) continue;
         if (!pw_matches.matches.size()) continue;
 		int src = pw_matches.src_img_idx;
 		int dst = pw_matches.dst_img_idx;
+        if (src == 0 || dst == 0 || abs(src - dst - 1) > 0.1) {
+            continue;
+        }
 		for (int i = 0; i < 10; ++i) {
-			int idx = rand() % pw_matches.matches.size();
-			int idx1 = pw_matches.matches[idx].queryIdx;
-			int idx2 = pw_matches.matches[idx].trainIdx;
-			KeyPoint k1 = features[src].keypoints[idx1];
-			KeyPoint k2 = features[dst].keypoints[idx2];
-			float x1 = k1.pt.x - features[src].img_size.width / 2;
-			float y1 = k1.pt.y - features[src].img_size.height / 2;
-			float x2 = k2.pt.x - features[dst].img_size.width / 2;
-			float y2 = k2.pt.y - features[dst].img_size.height / 2;
-            float theta = dst - src;
-            if (src == 0 && dst == NUM_IMAGES - 1 && wrapAround) {
-                theta = -1;
+            int idx = rand() % pw_matches.matches.size();
+            while (1) {
+                idx = rand() % pw_matches.matches.size();
+                if (!pw_matches.inliers_mask[idx]) continue;
+                int idx1 = pw_matches.matches[idx].queryIdx;
+                int idx2 = pw_matches.matches[idx].trainIdx;
+                KeyPoint k1 = features[src].keypoints[idx1];
+                KeyPoint k2 = features[dst].keypoints[idx2];
+
+                float h1 = features[src].img_size.height;
+                float w1 = features[src].img_size.width;
+                float h2 = features[dst].img_size.height;
+                float w2 = features[dst].img_size.width;
+
+                float x1 = k1.pt.x - w1 / 2;
+                float y1 = k1.pt.y - h1 / 2;
+                float x2 = k2.pt.x - w2 / 2;
+                float y2 = k2.pt.y - h2 / 2;
+
+                float theta = dst - src;
+                if (src == 0 && dst == NUM_IMAGES - 1 && wrapAround) {
+                    theta = -1;
+                }
+                theta *= 2 * PI / 6;
+
+                float x1_ = f * atan(x1 / f) + w1 / 2;
+                float x2_ = f * atan(x2 / f) + w2 / 2;
+                float y1_ = f * y1 / sqrt(x1*x1 + f*f) + h1 / 2;
+                float y2_ = f * y2 / sqrt(x2*x2 + f*f) + h2 / 2;
+                float scale = compose_scale / work_scale;
+                if (x1_ < 0 || x2_ < 0 || y1_ < 0 || y2_ < 0 || x1_ >= (images[src].cols / scale)
+                        || x2_ >= images[dst].cols / scale || y1_ >= images[src].rows / scale
+                        || y2_ >= images[dst].rows / scale) {
+                    continue;
+                }
+
+                int t1 = floor(y1_ * (N-1) / h1);
+                int t2 = floor(y2_ * (N-1) / h2);
+                int l1 = floor(x1_ * (M-1) / w1);
+                int l2 = floor(x2_ * (M-1) / w2);
+
+                float top1 = t1 * h1 / (N-1);
+                float bot1 = top1 + h1 / (N-1); // (t1+1) * h1 / N
+                float left1 = l1 * w1 / (M-1);
+                float right1 = left1 + w1 / (M-1); // (l1+1) * w1 / M
+                float top2 = t2 * h2 / (N-1);
+                float bot2 = top2 + h2 / (N-1); // (t2+1) * h2 / N
+                float left2 = l2 * w2 / (M-1);
+                float right2 = left2 + w2 / (M-1); // (l2+1) * w2 / M
+
+                float u1 = (x1_ - left1) / (right1 - left1);
+                float u2 = (x2_ - left2) / (right2 - left2);
+                float v1 = (y1_ - top1) / (bot1 - top1);
+                float v2 = (y2_ - top2) / (bot2 - top2);
+
+                float x = (1 - u1)*(1 - v1) * (left1) + u1*(1 - v1) * right1 + v1*(1 - u1) * left1 + u1*v1 * right1;
+                float x_ = (1 - u1)*(1 - v1) * (left1+10) + u1*(1 - v1) * right1 + v1*(1 - u1) * left1 + u1*v1 * right1;
+                float y = (1 - u1)*(1 - v1) * top1 + u1*(1 - v1) * top1 + v1*(1 - u1) * bot1 + u1*v1 * bot1;
+
+                A.insert(row,  2*(l1   + M * (t1)   + M*N*src)) = (1-u1)*(1-v1);
+                A.insert(row,  2*(l1+1 + M * (t1)   + M*N*src)) = u1*(1-v1);
+                A.insert(row,  2*(l1 +   M * (t1+1) + M*N*src)) = v1*(1-u1);
+                A.insert(row,  2*(l1+1 + M * (t1+1) + M*N*src)) = u1*v1;
+                A.insert(row,  2*(l2   + M * (t2)   + M*N*dst)) = -(1-u2)*(1-v2);
+                A.insert(row,  2*(l2+1 + M * (t2)   + M*N*dst)) = -u2*(1-v2);
+                A.insert(row,  2*(l2 +   M * (t2+1) + M*N*dst)) = -v2*(1-u2);
+                A.insert(row,  2*(l2+1 + M * (t2+1) + M*N*dst)) = -u2*v2;
+
+                b(row) = theta * f;
+
+                A.insert(row+1, 2*(l1   + M * (t1)   + M*N*src)+1) = (1-u1)*(1-v1);
+                A.insert(row+1, 2*(l1+1 + M * (t1)   + M*N*src)+1) = u1*(1-v1);
+                A.insert(row+1, 2*(l1 +   M * (t1+1) + M*N*src)+1) = v1*(1-u1);
+                A.insert(row+1, 2*(l1+1 + M * (t1+1) + M*N*src)+1) = u1*v1;
+                A.insert(row+1, 2*(l2   + M * (t2)   + M*N*dst)+1) = -(1-u2)*(1-v2);
+                A.insert(row+1, 2*(l2+1 + M * (t2)   + M*N*dst)+1) = -u2*(1-v2);
+                A.insert(row+1, 2*(l2 +   M * (t2+1) + M*N*dst)+1) = -v2*(1-u2);
+                A.insert(row+1, 2*(l2+1 + M * (t2+1) + M*N*dst)+1) = -u2*v2;
+                row+=2;
+                break;
             }
-            theta *= 2 * PI / 6;
-
-            float h1 = features[src].img_size.height;
-            float w1 = features[src].img_size.width;
-            float h2 = features[dst].img_size.height;
-            float w2 = features[dst].img_size.width;
-
-            float x1_ = f * atan(x1 / f) + w1 / 2;
-            float x2_ = f * (theta + atan(x2 / f)) + w2 / 2;
-            float xo2_ = f * atan(x2 / f) + w2 / 2;
-            float y1_ = f * y1 / sqrt(x1*x1 + f*f) + h1 / 2;
-            float y2_ = f * y2 / sqrt(x2*x2 + f*f) + h2 / 2;
-
-            int t1 = floor(y1_ * (N-1) / h1);
-            int t2 = floor(y2_ * (N-1) / h2);
-            int l1 = floor(x1_ * (M-1) / w1);
-            int l2 = floor(xo2_ * (M-1) / w2);
-            float top1 = t1 * h1 / N;
-            float bot1 = top1 + h1 / N; // (t1+1) * h1 / N
-            float left1 = l1 * w1 / M;
-            float right1 = left1 + w1 / M; // (l1+1) * w1 / M
-            float top2 = t2 * h2 / N;
-            float bot2 = top2 + h2 / N; // (t2+1) * h2 / N
-            float left2 = l2 * w2 / M;
-            float right2 = left2 + w2 / M; // (l2+1) * w2 / M
-
-            float u1 = (x1_ - right1) / (right1 - left1);
-            float u2 = (x1_ - right2) / (right2 - left2);
-            float v1 = (y1_ - top1) / (bot1 - top1);
-            float v2 = (y1_ - top1) / (bot2 - top2);
-
-            A.insert(row, 2*(l1   + M * (t1)   + M*N*src)) = (1-u1)*(1-v1);
-            A.insert(row, 2*(l1+1 + M * (t1)   + M*N*src)) = u1*(1-v1);
-            A.insert(row, 2*(l1 +   M * (t1+1) + M*N*src)) = v1*(1-u1);
-            A.insert(row, 2*(l1+1 + M * (t1+1) + M*N*src)) = u1*v1;
-            A.insert(row, 2*(l2   + M * (t2)   + M*N*dst)) = -(1-u2)*(1-v2);
-            A.insert(row, 2*(l2+1 + M * (t2)   + M*N*dst)) = -u2*(1-v2);
-            A.insert(row, 2*(l2 +   M * (t2+1) + M*N*dst)) = -v2*(1-u2);
-            A.insert(row, 2*(l2+1 + M * (t2+1) + M*N*dst)) = -u2*v2;
-
-            A.insert(row, 2*(l1   + M * (t1)   + M*N*src)+1) = (1-u1)*(1-v1);
-            A.insert(row, 2*(l1+1 + M * (t1)   + M*N*src)+1) = u1*(1-v1);
-            A.insert(row, 2*(l1 +   M * (t1+1) + M*N*src)+1) = v1*(1-u1);
-            A.insert(row, 2*(l1+1 + M * (t1+1) + M*N*src)+1) = u1*v1;
-            A.insert(row, 2*(l2   + M * (t2)   + M*N*dst)+1) = -(1-u2)*(1-v2);
-            A.insert(row, 2*(l2+1 + M * (t2)   + M*N*dst)+1) = -u2*(1-v2);
-            A.insert(row, 2*(l2 +   M * (t2+1) + M*N*dst)+1) = -v2*(1-u2);
-            A.insert(row, 2*(l2+1 + M * (t2+1) + M*N*dst)+1) = -u2*v2;
-            row++;
 		}
 	}
 
@@ -703,7 +726,7 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, v
                         line(mat, start, end, Scalar(1, 0, 0), 3);
                     }
                 }
-                imshow("Asaas", mat);
+                imshow(/*std::to_string(idx)*/"Alaas", mat);
                 waitKey();
             }
             // Treat the calculated values as a forward map.
@@ -781,7 +804,8 @@ bool stitch_calib(vector<vector<Mat>> full_img, vector<CameraParams> &cameras, v
 			   x_maps, y_maps, compose_scale, warped_image_scale, blend_width);
 	times[3] = std::chrono::high_resolution_clock::now();
 
-	calibrateMeshWarp(full_img[full_img.size()-1], features, pairwise_matches, x_mesh, y_mesh, x_maps, y_maps, cameras[0].focal, compose_scale);
+	calibrateMeshWarp(full_img[full_img.size()-1], features, pairwise_matches, x_mesh, y_mesh,
+                      x_maps, y_maps, cameras[0].focal, compose_scale, work_scale);
 	times[4] = std::chrono::high_resolution_clock::now();
 	return true;
 }
