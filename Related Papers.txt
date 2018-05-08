@@ -36,4 +36,5 @@ Content-Preserving Warps for 3D Video Stabilization
 http://web.cecs.pdx.edu/~fliu/project/3dstab.htm
 http://research.cs.wisc.edu/graphics/Papers/Gleicher/fliu/siggraph09_preprint.pdf
 
+Fundamentals of Texture Mapping and Image Warping
 http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.47.3964&rep=rep1&type=pdf
