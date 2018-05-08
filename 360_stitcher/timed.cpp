@@ -44,14 +44,14 @@ using namespace cv::detail;
 
 std::mutex cout_mutex;
 
-std::string base = "static";
-int skip_frames = 220;
+std::string base = "still";
+int skip_frames = 0;
 bool wrapAround = true;
 bool recalibrate = false;
 bool save_video = false;
-int const NUM_IMAGES = 5;
-int offsets[NUM_IMAGES] = {0, 37, 72, 72, 37}; // static
-//int offsets[NUM_IMAGES] = { 0 }; // dynamic
+int const NUM_IMAGES = 2;
+//int offsets[NUM_IMAGES] = {0, 37, 72, 72, 37}; // static
+int offsets[NUM_IMAGES] = { 0 }; // dynamic
 int const INIT_FRAME_AMT = 1;
 int const INIT_SKIPS = 0;
 int const RECALIB_DEL = 2;
@@ -192,7 +192,7 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
 	cameras = vector<CameraParams>(NUM_IMAGES);
 	//estimateFocal(features, pairwise_matches, focals);
 	for (int i = 0; i < cameras.size(); ++i) {
-		double rot = 2 * PI * (i+2) / 6;
+		double rot = 2 * PI * (i+3) / 6;
 		Mat rotMat(3, 3, CV_32F);
 		double L[3] = {cos(rot), 0, sin(rot)};
 		double u[3] = {0, 1, 0};
@@ -285,6 +285,7 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
 	{
 		warped_image_scale = (focals[focals.size() / 2 - 1] + focals[focals.size() / 2]) * 0.5f;
 	}
+    warped_image_scale = 503;
 
 	for (int i = 0; i < cameras.size(); ++i) {
 		cameras[i].focal = warped_image_scale;
@@ -461,6 +462,7 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 		dilation_filter->apply(gpu_masks_warped[img_idx], gpu_seam_mask);
 		cuda::resize(gpu_seam_mask, gpu_seam_mask, gpu_mask_warped.size(), 0.0, 0.0, 1);
 		cuda::bitwise_and(gpu_seam_mask, gpu_mask_warped, gpu_mask_warped, noArray());
+        gpu_mask_warped.setTo(Scalar::all(255));
         if (img_idx == 1) {
             //gpu_mask_warped.setTo(Scalar::all(255));
         }
@@ -485,8 +487,8 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, vector<MatchesInfo> &pairwise_matches, vector<cuda::GpuMat> &x_mesh, vector<cuda::GpuMat> &y_mesh,
 					   vector<cuda::GpuMat> &x_maps, vector<cuda::GpuMat> &y_maps, float focal_length, double compose_scale, double work_scale) {
 	int64 t = getTickCount();
-	int N = 10;
-	int M = 10;
+	int N = 5;
+	int M = 5;
 	vector<Size> mesh_size(full_imgs.size());
 	vector<Mat> images(full_imgs.size());
 	vector<Mat> mesh_cpu_x(full_imgs.size(), Mat(N, M, CV_32FC1));
@@ -512,10 +514,11 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, v
 		}
 	}
 
-	int num_rows = 2 * images.size()*N*M + 2*images.size()*(N-1)*(M-1) + 2 * pairwise_matches.size() * 10;
+    int features_per_image = 10;
+	int num_rows = 2 * images.size()*N*M + 2*images.size()*(N-1)*(M-1) + 2 * pairwise_matches.size() * features_per_image;
 	Eigen::SparseMatrix<double> A(num_rows, 2*N*M*images.size());
 	Eigen::VectorXd b(num_rows), x;
-	float alphas[2] = {0.01, 0.001};
+	float alphas[3] = {1, 0.01, 0.001};
 	b.fill(0);
 
 	// Photometric term from http://www.liushuaicheng.org/CVPR2017/DirectPhotometric.pdf
@@ -540,7 +543,7 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, v
 
 	
 	// Global alignment term from http://web.cecs.pdx.edu/~fliu/papers/cvpr2014-stitching.pdf
-	float a = alphas[0];
+	float a = alphas[1];
 	int row = 0;
 	for (int idx = 0; idx < images.size(); ++idx) {
 		for (int i = 0; i < N; ++i) {
@@ -548,6 +551,15 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, v
 				float x1 = j * mesh_size[idx].width / (M-1);
 				float y1 = i * mesh_size[idx].height / (N-1);
 				float tau = 1;
+                float scale = compose_scale / work_scale;
+                float max_dist = 5;
+                for (int ft = 0; ft < features[idx].keypoints.size(); ++ft) {
+                    Point ft_point = features[idx].keypoints[ft].pt;
+                    if (sqrt(pow(ft_point.x * scale - x1, 2) + pow(ft_point.y * scale - y1, 2)) < max_dist) {
+                        tau = 0;
+                        break;
+                    }
+                }
 				A.insert(2*(j + i*M + idx*M*N), 2*(j + i*M + idx*M*N)) = a * tau;
 				A.insert(2*(j + i*M + idx*M*N) + 1, 2*(j + i*M + idx*M*N)+1) = a * tau;
 				b(2*(j + i*M + idx*M*N)) = a * tau * x1;
@@ -558,7 +570,7 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, v
 	}
 
 	// Smoothness term from http://web.cecs.pdx.edu/~fliu/papers/cvpr2014-stitching.pdf
-	a = alphas[1];
+	a = alphas[2];
 	for (int idx = 0; idx < images.size(); ++idx) {
 		for (int i = 0; i < N-1; ++i) {
 			for (int j = 0; j < M-1; ++j) {
@@ -578,36 +590,55 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, v
 				float v = (-dx*y1+dx*y2+x1*dy-x2*dy)/(dx*dx+dy*dy);
 				float u2 = (dx2*x2-dx2*x3+dy2*y2-dy2*y3)/(dx2*dx2+dy2*dy2);
 				float v2 = (-dx2*y2+dx2*y3+x2*dy2-x3*dy2)/(dx2*dx2+dy2*dy2);
-				A.insert(row,   2*(j + M * i + M*N*idx)) = a; // x1
-				A.insert(row,   2*(j + M * i + M*N*idx) + 1) = a; // y1
-				A.insert(row,   2*(j + M * (i+1) + M*N*idx)) = a*(u + v - 1); // x2
-				A.insert(row,   2*(j + M * (i+1) + M*N*idx) + 1) = a*(u - v - 1); // y2
-				A.insert(row,   2*(j+1 + M * i + M*N*idx)) = a*(-u - v); // x3
-				A.insert(row,   2*(j+1 + M * i + M*N*idx) + 1) = a*(-u + v); // y3
 
-				A.insert(row+1, 2*(j + M * (i+1) + M*N*idx)) = a; // x2
-				A.insert(row+1, 2*(j + M * (i+1) + M*N*idx) + 1) = a; // y2
-				A.insert(row+1, 2*(j+1 + M * i + M*N*idx)) = a*(u + v - 1); // x3
-				A.insert(row+1, 2*(j+1 + M * i + M*N*idx) + 1) = a*(u - v - 1); // y3
-				A.insert(row+1, 2*(j+1 + M * (i+1) + M*N*idx)) = a*(-u - v); // x4
-				A.insert(row+1, 2*(j+1 + M * (i+1) + M*N*idx) + 1) = a*(-u + v); // x4
+                float sal = 1; // Salience of the triangle. To be implemented
+				A.insert(row,   2*(j + M * i + M*N*idx)) = a * sal; // x1
+				A.insert(row,   2*(j + M * i + M*N*idx) + 1) = a * sal; // y1
+				A.insert(row,   2*(j + M * (i+1) + M*N*idx)) = a*(u + v - 1) * sal; // x2
+				A.insert(row,   2*(j + M * (i+1) + M*N*idx) + 1) = a*(u - v - 1) * sal; // y2
+				A.insert(row,   2*(j+1 + M * i + M*N*idx)) = a*(-u - v) * sal; // x3
+				A.insert(row,   2*(j+1 + M * i + M*N*idx) + 1) = a*(-u + v) * sal; // y3
+
+				A.insert(row+1, 2*(j + M * (i+1) + M*N*idx)) = a * sal; // x2
+				A.insert(row+1, 2*(j + M * (i+1) + M*N*idx) + 1) = a * sal; // y2
+				A.insert(row+1, 2*(j+1 + M * i + M*N*idx)) = a*(u + v - 1) * sal; // x3
+				A.insert(row+1, 2*(j+1 + M * i + M*N*idx) + 1) = a*(u - v - 1) * sal; // y3
+				A.insert(row+1, 2*(j+1 + M * (i+1) + M*N*idx)) = a*(-u - v) * sal; // x4
+				A.insert(row+1, 2*(j+1 + M * (i+1) + M*N*idx) + 1) = a*(-u + v) * sal; // x4
 				row += 2;
 			}
 		}
 	}
 
+    for (int idx = 0; idx < NUM_IMAGES; ++idx) {
+        for (int i = 0; i < mesh_cpu_x[idx].rows - 1; ++i) {
+            for (int j = 0; j < mesh_cpu_x[idx].cols; ++j) {
+                Point start = Point(mesh_cpu_x[idx].at<float>(i, j), mesh_cpu_y[idx].at<float>(i, j));
+                Point end = Point(mesh_cpu_x[idx].at<float>(i + 1, j), mesh_cpu_y[idx].at<float>(i + 1, j));
+                line(images[idx], start, end, Scalar(255, 0, 0), 2);
+            }
+        }
+        for (int i = 0; i < mesh_cpu_x[idx].rows; ++i) {
+            for (int j = 0; j < mesh_cpu_x[idx].cols - 1; ++j) {
+                Point start = Point(mesh_cpu_x[idx].at<float>(i, j), mesh_cpu_y[idx].at<float>(i, j));
+                Point end = Point(mesh_cpu_x[idx].at<float>(i, j + 1), mesh_cpu_y[idx].at<float>(i, j + 1));
+                line(images[idx], start, end, Scalar(255, 0, 0), 2);
+            }
+        }
+    }
 	// Local alignment term from http://web.cecs.pdx.edu/~fliu/papers/cvpr2014-stitching.pdf
     float f = focal_length;
+    a = alphas[0];
 	for (int idx = 0; idx < pairwise_matches.size(); ++idx) {
         MatchesInfo &pw_matches = pairwise_matches[idx];
         if (pw_matches.confidence < CONF_THRESH) continue;
         if (!pw_matches.matches.size()) continue;
 		int src = pw_matches.src_img_idx;
 		int dst = pw_matches.dst_img_idx;
-        if (src == 0 || dst == 0 || abs(src - dst - 1) > 0.1) {
+        if (src == 9 || dst == 9 || abs(src - dst - 1) > 0.1) {
             continue;
         }
-		for (int i = 0; i < 10; ++i) {
+		for (int i = 0; i < features_per_image; ++i) {
             int idx = rand() % pw_matches.matches.size();
             while (1) {
                 idx = rand() % pw_matches.matches.size();
@@ -633,22 +664,38 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, v
                 }
                 theta *= 2 * PI / 6;
 
-                float x1_ = f * atan(x1 / f) + w1 / 2;
-                float x2_ = f * atan(x2 / f) + w2 / 2;
-                float y1_ = f * y1 / sqrt(x1*x1 + f*f) + h1 / 2;
-                float y2_ = f * y2 / sqrt(x2*x2 + f*f) + h2 / 2;
+                // Feature points are from work scale images change scale to compose scale
                 float scale = compose_scale / work_scale;
-                if (x1_ < 0 || x2_ < 0 || y1_ < 0 || y2_ < 0 || x1_ >= (images[src].cols / scale)
-                        || x2_ >= images[dst].cols / scale || y1_ >= images[src].rows / scale
-                        || y2_ >= images[dst].rows / scale) {
+                float x1_ = (f * atan(x1 / f) + w1 / 2) * scale;
+                float x2_ = (f * atan(x2 / f) + w2 / 2) * scale;
+                float y1_ = (f * y1 / sqrt(x1*x1 + f*f) + h1 / 2) * scale;
+                float y2_ = (f * y2 / sqrt(x2*x2 + f*f) + h2 / 2) * scale;
+
+                // change the image sizes to compose scale as well
+                h1 = images[src].rows;
+                w1 = images[src].cols;
+                h2 = images[dst].rows;
+                w2 = images[dst].cols;
+
+                // Ignore features which have warped outside of one image
+                if (x1_ < 0 || x2_ < 0 || y1_ < 0 || y2_ < 0 || x1_ >= w1 || x2_ >= w2
+                        || y1_ >= h1 || y2_ >= h2 ) {
                     continue;
                 }
 
+                /*circle(images[src], Point(x1_, y1_), 3, Scalar(0, 255, 0), 3);
+                circle(images[src], Point(x2_ + f * scale * theta, y2_), 3, Scalar(0, 0, 255), 3);
+                imshow(std::to_string(src), images[src]);
+                imshow(std::to_string(dst), images[dst]);
+                waitKey(1);*/
+
+                // Calculate in which rectangle the features are
                 int t1 = floor(y1_ * (N-1) / h1);
                 int t2 = floor(y2_ * (N-1) / h2);
                 int l1 = floor(x1_ * (M-1) / w1);
                 int l2 = floor(x2_ * (M-1) / w2);
 
+                // Calculate coordinates for the corners of the recatngles the features are in
                 float top1 = t1 * h1 / (N-1);
                 float bot1 = top1 + h1 / (N-1); // (t1+1) * h1 / N
                 float left1 = l1 * w1 / (M-1);
@@ -658,34 +705,38 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, v
                 float left2 = l2 * w2 / (M-1);
                 float right2 = left2 + w2 / (M-1); // (l2+1) * w2 / M
 
+                // Calculate local coordinates for the features within the rectangles
                 float u1 = (x1_ - left1) / (right1 - left1);
                 float u2 = (x2_ - left2) / (right2 - left2);
                 float v1 = (y1_ - top1) / (bot1 - top1);
                 float v2 = (y2_ - top2) / (bot2 - top2);
 
-                float x = (1 - u1)*(1 - v1) * (left1) + u1*(1 - v1) * right1 + v1*(1 - u1) * left1 + u1*v1 * right1;
-                float x_ = (1 - u1)*(1 - v1) * (left1+10) + u1*(1 - v1) * right1 + v1*(1 - u1) * left1 + u1*v1 * right1;
+                float x11 = (1 - u1)*(1 - v1) * (left1) + u1*(1 - v1) * right1 + v1*(1 - u1) * left1 + u1*v1 * right1;
+                float x22 = (1 - u2)*(1 - v2) * (left2) + u2*(1 - v2) * right2 + v2*(1 - u2) * left2 + u2*v2 * right2;
+                float diff = x22 - x11;
+                float expected = theta * f * scale;
                 float y = (1 - u1)*(1 - v1) * top1 + u1*(1 - v1) * top1 + v1*(1 - u1) * bot1 + u1*v1 * bot1;
+                // _x_ - _x2_ = theta * f * scale
+                A.insert(row,  2*(l1   + M * (t1)   + M*N*src)) = (1-u1)*(1-v1) * a;
+                A.insert(row,  2*(l1+1 + M * (t1)   + M*N*src)) = u1*(1-v1) * a;
+                A.insert(row,  2*(l1 +   M * (t1+1) + M*N*src)) = v1*(1-u1) * a;
+                A.insert(row,  2*(l1+1 + M * (t1+1) + M*N*src)) = u1*v1 * a;
+                A.insert(row,  2*(l2   + M * (t2)   + M*N*dst)) = -(1-u2)*(1-v2) * a;
+                A.insert(row,  2*(l2+1 + M * (t2)   + M*N*dst)) = -u2*(1-v2) * a;
+                A.insert(row,  2*(l2 +   M * (t2+1) + M*N*dst)) = -v2*(1-u2) * a;
+                A.insert(row,  2*(l2+1 + M * (t2+1) + M*N*dst)) = -u2*v2 * a;
 
-                A.insert(row,  2*(l1   + M * (t1)   + M*N*src)) = (1-u1)*(1-v1);
-                A.insert(row,  2*(l1+1 + M * (t1)   + M*N*src)) = u1*(1-v1);
-                A.insert(row,  2*(l1 +   M * (t1+1) + M*N*src)) = v1*(1-u1);
-                A.insert(row,  2*(l1+1 + M * (t1+1) + M*N*src)) = u1*v1;
-                A.insert(row,  2*(l2   + M * (t2)   + M*N*dst)) = -(1-u2)*(1-v2);
-                A.insert(row,  2*(l2+1 + M * (t2)   + M*N*dst)) = -u2*(1-v2);
-                A.insert(row,  2*(l2 +   M * (t2+1) + M*N*dst)) = -v2*(1-u2);
-                A.insert(row,  2*(l2+1 + M * (t2+1) + M*N*dst)) = -u2*v2;
+                b(row) = theta * f * scale * a;
 
-                b(row) = theta * f;
-
-                A.insert(row+1, 2*(l1   + M * (t1)   + M*N*src)+1) = (1-u1)*(1-v1);
-                A.insert(row+1, 2*(l1+1 + M * (t1)   + M*N*src)+1) = u1*(1-v1);
-                A.insert(row+1, 2*(l1 +   M * (t1+1) + M*N*src)+1) = v1*(1-u1);
-                A.insert(row+1, 2*(l1+1 + M * (t1+1) + M*N*src)+1) = u1*v1;
-                A.insert(row+1, 2*(l2   + M * (t2)   + M*N*dst)+1) = -(1-u2)*(1-v2);
-                A.insert(row+1, 2*(l2+1 + M * (t2)   + M*N*dst)+1) = -u2*(1-v2);
-                A.insert(row+1, 2*(l2 +   M * (t2+1) + M*N*dst)+1) = -v2*(1-u2);
-                A.insert(row+1, 2*(l2+1 + M * (t2+1) + M*N*dst)+1) = -u2*v2;
+                // _y_ - _y2_ = 0
+                A.insert(row+1, 2*(l1   + M * (t1)   + M*N*src)+1) = (1-u1)*(1-v1) * a;
+                A.insert(row+1, 2*(l1+1 + M * (t1)   + M*N*src)+1) = u1*(1-v1) * a;
+                A.insert(row+1, 2*(l1 +   M * (t1+1) + M*N*src)+1) = v1*(1-u1) * a;
+                A.insert(row+1, 2*(l1+1 + M * (t1+1) + M*N*src)+1) = u1*v1 * a;
+                A.insert(row+1, 2*(l2   + M * (t2)   + M*N*dst)+1) = -(1-u2)*(1-v2) * a;
+                A.insert(row+1, 2*(l2+1 + M * (t2)   + M*N*dst)+1) = -u2*(1-v2) * a;
+                A.insert(row+1, 2*(l2 +   M * (t2+1) + M*N*dst)+1) = -v2*(1-u2) * a;
+                A.insert(row+1, 2*(l2+1 + M * (t2+1) + M*N*dst)+1) = -u2*v2 * a;
                 row+=2;
                 break;
             }
@@ -707,9 +758,8 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, v
                 mesh_cpu_y[idx].at<float>(i, j) = x(2 * (j + i*M + idx*M*N) + 1);
             }
         }
-		std::cout << mesh_cpu_y[idx] << std::endl;
         if (true) {
-            bool debug = true;
+            bool debug = false;
             if (debug) {
                 Mat mat(mesh_size[idx].height, mesh_size[idx].width, CV_16UC3);
                 for (int i = 0; i < mesh_cpu_x[idx].rows - 1; ++i) {
@@ -987,6 +1037,7 @@ int main(int argc, char* argv[])
 		}
 	}
 	//if (!stitch_calib(x_maps, y_maps, compose_scale, blender, blend_width, full_img_size, corners, sizes))
+	int64 start = getTickCount();
 	if (!stitch_calib(full_img, cameras, x_maps, y_maps, x_mesh, y_mesh, work_scale, seam_scale, seam_work_aspect, compose_scale, blender, compensator, warped_image_scale, blend_width, full_img_size))
 	{
 		LOGLN("");
@@ -994,7 +1045,6 @@ int main(int argc, char* argv[])
 		return -1;
 	}
 	//blender = Blender::createDefault(Blender::MULTI_BAND, true);
-	int64 start = getTickCount();
 	/*if (!stitch_calib(full_img, cameras, x_maps, y_maps, x_mesh, y_mesh, work_scale, seam_scale, seam_work_aspect, compose_scale, blender, compensator, warped_image_scale, blend_width, full_img_size))
 	{
 		LOGLN("");
