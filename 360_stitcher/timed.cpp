@@ -1,8 +1,6 @@
 #include <iostream>
 #include <string>
 #include <Windows.h>
-#include "blockingqueue.h"
-#include "barrier.h"
 #include "opencv2/opencv_modules.hpp"
 #include <opencv2/core/utility.hpp>
 #include "opencv2/imgcodecs.hpp"
@@ -23,6 +21,9 @@
 #include "opencv2/cudaarithm.hpp"
 #include "opencv2/cudafeatures2d.hpp"
 #include "opencv2/calib3d.hpp"
+
+#include "blockingqueue.h"
+#include "barrier.h"
 
 #include <Eigen/IterativeLinearSolvers>
 #include <Eigen/SparseCholesky>
@@ -49,7 +50,7 @@ int skip_frames = 0;
 bool wrapAround = true;
 bool recalibrate = false;
 bool save_video = false;
-int const NUM_IMAGES = 2;
+int const NUM_IMAGES = 6;
 //int offsets[NUM_IMAGES] = {0, 37, 72, 72, 37}; // static
 int offsets[NUM_IMAGES] = { 0 }; // dynamic
 int const INIT_FRAME_AMT = 1;
@@ -79,6 +80,9 @@ void msg(String const message, double const value, int const thread_id)
 	std::cout << thread_id << ": " << message << value << std::endl;
 	cout_mutex.unlock();
 }
+
+extern void custom_resize(cuda::GpuMat &in, cuda::GpuMat &out, Size t_size);
+
 void findFeatures(vector<vector<Mat>> &full_img, vector<ImageFeatures> &features,
 				  double &work_scale, double &seam_scale, double &seam_work_aspect) {
 	//Ptr<cuda::ORB> d_orb = cuda::ORB::create(1500, 1.2, 8);
@@ -192,7 +196,7 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
 	cameras = vector<CameraParams>(NUM_IMAGES);
 	//estimateFocal(features, pairwise_matches, focals);
 	for (int i = 0; i < cameras.size(); ++i) {
-		double rot = 2 * PI * (i+3) / 6;
+		double rot = 2 * PI * (i+0) / 6;
 		Mat rotMat(3, 3, CV_32F);
 		double L[3] = {cos(rot), 0, sin(rot)};
 		double u[3] = {0, 1, 0};
@@ -285,7 +289,7 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
 	{
 		warped_image_scale = (focals[focals.size() / 2 - 1] + focals[focals.size() / 2]) * 0.5f;
 	}
-    warped_image_scale = 503;
+    //warped_image_scale = 503;
 
 	for (int i = 0; i < cameras.size(); ++i) {
 		cameras[i].focal = warped_image_scale;
@@ -462,13 +466,7 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 		dilation_filter->apply(gpu_masks_warped[img_idx], gpu_seam_mask);
 		cuda::resize(gpu_seam_mask, gpu_seam_mask, gpu_mask_warped.size(), 0.0, 0.0, 1);
 		cuda::bitwise_and(gpu_seam_mask, gpu_mask_warped, gpu_mask_warped, noArray());
-        gpu_mask_warped.setTo(Scalar::all(255));
-        if (img_idx == 1) {
-            //gpu_mask_warped.setTo(Scalar::all(255));
-        }
-        else {
-            //gpu_mask_warped.setTo(Scalar::all(0));
-        }
+
 		// Blend the current image
 		mb->init_gpu(gpu_img, gpu_mask_warped, corners[img_idx]);
 	}
@@ -491,14 +489,16 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, v
 	int M = 5;
 	vector<Size> mesh_size(full_imgs.size());
 	vector<Mat> images(full_imgs.size());
-	vector<Mat> mesh_cpu_x(full_imgs.size(), Mat(N, M, CV_32FC1));
-	vector<Mat> mesh_cpu_y(full_imgs.size(), Mat(N, M, CV_32FC1));
+	vector<Mat> mesh_cpu_x(full_imgs.size());
+	vector<Mat> mesh_cpu_y(full_imgs.size());
 	cuda::GpuMat small_mesh_x;
 	cuda::GpuMat small_mesh_y;
 	vector<Mat> x_map(full_imgs.size());
 	vector<Mat> y_map(full_imgs.size());
 
 	for (int idx = 0; idx < full_imgs.size(); ++idx) {
+        mesh_cpu_x[idx] = Mat(N, M, CV_32FC1);
+        mesh_cpu_y[idx] = Mat(N, M, CV_32FC1);
 		resize(full_imgs[idx], images[idx], Size(), compose_scale, compose_scale);
 		x_maps[idx].download(x_map[idx]);
 		y_maps[idx].download(y_map[idx]);
@@ -508,11 +508,11 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, v
 		y_mesh[idx] = cuda::GpuMat(mesh_size[idx], CV_32FC1);
 		for (int i = 0; i < N; ++i) {
 			for (int j = 0; j < M; ++j) {
-				mesh_cpu_x[idx].at<float>(i, j) = j * mesh_size[idx].width / (M-1);
-				mesh_cpu_y[idx].at<float>(i, j) = i * mesh_size[idx].height / (N-1);
-			}
-		}
-	}
+                mesh_cpu_x[idx].at<float>(i, j) = j * mesh_size[idx].width / (M-1);
+                mesh_cpu_y[idx].at<float>(i, j) = i * mesh_size[idx].height / (N-1);
+            }
+        }
+    }
 
     int features_per_image = 10;
 	int num_rows = 2 * images.size()*N*M + 2*images.size()*(N-1)*(M-1) + 2 * pairwise_matches.size() * features_per_image;
@@ -687,7 +687,7 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, v
                 circle(images[src], Point(x2_ + f * scale * theta, y2_), 3, Scalar(0, 0, 255), 3);
                 imshow(std::to_string(src), images[src]);
                 imshow(std::to_string(dst), images[dst]);
-                waitKey(1);*/
+                waitKey(0);*/
 
                 // Calculate in which rectangle the features are
                 int t1 = floor(y1_ * (N-1) / h1);
@@ -749,6 +749,8 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, v
 
 	cuda::GpuMat gpu_small_mesh_x;
 	cuda::GpuMat gpu_small_mesh_y;
+    cuda::GpuMat big_x;
+    cuda::GpuMat big_y;
 	Mat big_mesh_x;
 	Mat big_mesh_y;
 	for (int idx = 0; idx < full_imgs.size(); ++idx) {
@@ -776,29 +778,46 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, v
                         line(mat, start, end, Scalar(1, 0, 0), 3);
                     }
                 }
-                imshow(/*std::to_string(idx)*/"Alaas", mat);
+                imshow(std::to_string(idx), mat);
                 waitKey();
             }
             // Treat the calculated values as a forward map.
             // This means they have to be converted to a backward map.
-            resize(mesh_cpu_x[idx], big_mesh_x, mesh_size[idx]);
-            resize(mesh_cpu_y[idx], big_mesh_y, mesh_size[idx]);
-            Mat warp_x(mesh_size[idx].height / 2, mesh_size[idx].width / 2, mesh_cpu_x[idx].type());
-            Mat warp_y(mesh_size[idx].height / 2, mesh_size[idx].width / 2, mesh_cpu_y[idx].type());
+            gpu_small_mesh_x.upload(mesh_cpu_x[idx]);
+            gpu_small_mesh_y.upload(mesh_cpu_y[idx]);
+            custom_resize(gpu_small_mesh_x, big_x, mesh_size[idx]);
+            custom_resize(gpu_small_mesh_y, big_y, mesh_size[idx]);
+            big_x.download(big_mesh_x);
+            big_y.download(big_mesh_y);
+            //resize(mesh_cpu_x[idx], big_mesh_x, mesh_size[idx], 0, 0, INTER_LINEAR);
+            //resize(mesh_cpu_y[idx], big_mesh_y, mesh_size[idx], 0, 0, INTER_LINEAR);
+
+            int scale = 2;
+            Mat warp_x(mesh_size[idx].height / scale, mesh_size[idx].width / scale, mesh_cpu_x[idx].type());
+            Mat warp_y(mesh_size[idx].height / scale, mesh_size[idx].width / scale, mesh_cpu_y[idx].type());
+            Mat set_values(mesh_size[idx].height / scale, mesh_size[idx].width / scale, CV_32F);
+            set_values.setTo(Scalar::all(0));
+            warp_x.setTo(Scalar::all(0));
+            warp_y.setTo(Scalar::all(0));
             for (int i = 0; i < mesh_size[idx].height; ++i) {
                 for (int j = 0; j < mesh_size[idx].width; ++j) {
-                    int x = (int)big_mesh_x.at<float>(i, j) / 2;
-                    int y = (int)big_mesh_y.at<float>(i, j) / 2;
-                    if (x > 0 && y > 0 && x < warp_x.cols && y < warp_x.rows) {
-                        warp_x.at<float>(y, x) = (float)j;
-                        warp_y.at<float>(y, x) = (float)i;
+                    int x = (int)big_mesh_x.at<float>(i, j) / scale;
+                    int y = (int)big_mesh_y.at<float>(i, j) / scale;
+                    if (x >= 0 && y >= 0 && x < warp_x.cols && y < warp_x.rows) {
+                        if (!set_values.at<float>(y, x)) {
+                            warp_x.at<float>(y, x) = (float)j;
+                            warp_y.at<float>(y, x) = (float)i;
+                            set_values.at<float>(y, x) = 1;
+                        }
                     }
                 }
             }
-            resize(warp_x, big_mesh_x, mesh_size[idx]);
-            resize(warp_y, big_mesh_y, mesh_size[idx]);
-            x_mesh[idx].upload(big_mesh_x);
-            y_mesh[idx].upload(big_mesh_y);
+            //resize(warp_x, big_mesh_x, mesh_size[idx]);
+            //resize(warp_y, big_mesh_y, mesh_size[idx]);
+            gpu_small_mesh_x.upload(warp_x);
+            gpu_small_mesh_y.upload(warp_y);
+            custom_resize(gpu_small_mesh_x, x_mesh[idx], mesh_size[idx]);
+            custom_resize(gpu_small_mesh_y, y_mesh[idx], mesh_size[idx]);
         } else {
             // Treat the calculated values as a backward map
             gpu_small_mesh_x.upload(mesh_cpu_x[idx]);
@@ -904,6 +923,8 @@ void stitch_online(double compose_scale, Mat &img, cuda::GpuMat &x_map, cuda::Gp
 
 	// Warp the image according to a mesh
 	cuda::remap(images[img_num], warped_images[img_num], x_mesh, y_mesh, INTER_LINEAR, BORDER_CONSTANT, Scalar(0), stream);
+
+    mb->update_mask(img_num, x_mesh, y_mesh, stream);
 	
 	//filter->apply(images[img_num], images[img_num], stream);
 	if (img_num == printing) {
