@@ -45,28 +45,38 @@ using namespace cv::detail;
 
 std::mutex cout_mutex;
 
-std::string base = "still";
-int skip_frames = 0;
-bool wrapAround = true;
-bool recalibrate = false;
-bool enable_local = true;
-bool save_video = false;
-int const NUM_IMAGES = 6;
-//int offsets[NUM_IMAGES] = {0, 37, 72, 72, 37}; // static
-int offsets[NUM_IMAGES] = { 0 }; // dynamic
-int const INIT_FRAME_AMT = 1;
-int const INIT_SKIPS = 0;
-int const RECALIB_DEL = 2;
-double const WORK_MEGAPIX = 0.6;	//0.6;	//-1			// Megapix parameter is scaled to the number
-double const SEAM_MEAGPIX = 0.01;							// of pixels in full image and this is used
-double const COMPOSE_MEGAPIX = 1.4;	//1.4;	//2.2;	//-1	// as a scaling factor when resizing images
-float const MATCH_CONF = 0.5f;
-float const CONF_THRESH = 0.95f;
-int const BLEND_TYPE = Blender::MULTI_BAND;					// Feather blending leaves ugly seams
-float const BLEND_STRENGTH = 5;
-int const HESS_THRESH = 300;
-int const NOCTAVES = 4;
-int const NOCTAVESLAYERS = 2;
+std::string base = "static";
+const int skip_frames = 220;
+const bool wrapAround = true;
+const bool recalibrate = false;
+const bool enable_local = true;
+const bool save_video = false;
+const int const NUM_IMAGES = 5;
+int offsets[NUM_IMAGES] = {0, 37, 72, 72, 37}; // static
+//int offsets[NUM_IMAGES] = { 0 }; // dynamic
+const int INIT_FRAME_AMT = 1;
+const int INIT_SKIPS = 0;
+const int RECALIB_DEL = 2;
+const double WORK_MEGAPIX = 0.6;	//0.6;	//-1			// Megapix parameter is scaled to the number
+const double SEAM_MEAGPIX = 0.01;							// of pixels in full image and this is used
+const double COMPOSE_MEGAPIX = 1.4;	//1.4;	//2.2;	//-1	// as a scaling factor when resizing images
+const float MATCH_CONF = 0.5f;
+const float CONF_THRESH = 0.95f;
+const int BLEND_TYPE = Blender::MULTI_BAND;					// Feather blending leaves ugly seams
+const float BLEND_STRENGTH = 5;
+const int HESS_THRESH = 300;
+const int NOCTAVES = 4;
+const int NOCTAVESLAYERS = 2;
+
+const int const MAX_FEATURES_PER_IMAGE = 100;
+const bool VISUALIZE_MATCHES = false; // Draw the meshes and matches to images pre mesh warp
+const bool VISUALIZE_WARPED = false; // Draw the warped mesh
+const int N = 2;
+const int M = 2;
+// Alphas are weights for different cost functions
+// 0: Local alignment, 1: Global alignment, 2: Smoothness
+const float ALPHAS[3] = {1, 0.01, 0.001};
+const int GLOBAL_DIST = 5; // Maximum distance from vertex in global warping
 
 // Test material before right videos are obtained from the camera rig
 vector<VideoCapture> CAPTURES;
@@ -474,7 +484,6 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 	}
 	//times[3] = std::chrono::high_resolution_clock::now();
 
-
 	Mat result;
 	Mat result_mask;
 
@@ -486,15 +495,10 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 
 void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, vector<MatchesInfo> &pairwise_matches, vector<cuda::GpuMat> &x_mesh, vector<cuda::GpuMat> &y_mesh,
 					   vector<cuda::GpuMat> &x_maps, vector<cuda::GpuMat> &y_maps, float focal_length, double compose_scale, double work_scale) {
-	int64 t = getTickCount();
-	int N = 2;
-	int M = 2;
 	vector<Size> mesh_size(full_imgs.size());
 	vector<Mat> images(full_imgs.size());
 	vector<Mat> mesh_cpu_x(full_imgs.size());
 	vector<Mat> mesh_cpu_y(full_imgs.size());
-	cuda::GpuMat small_mesh_x;
-	cuda::GpuMat small_mesh_y;
 	vector<Mat> x_map(full_imgs.size());
 	vector<Mat> y_map(full_imgs.size());
 
@@ -516,50 +520,25 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, v
         }
     }
 
-    int features_per_image = 50;
+    int features_per_image = MAX_FEATURES_PER_IMAGE;
 	int num_rows = 2 * images.size()*N*M + 2*images.size()*(N-1)*(M-1) + 2 * pairwise_matches.size() * features_per_image;
 	Eigen::SparseMatrix<double> A(num_rows, 2*N*M*images.size());
 	Eigen::VectorXd b(num_rows), x;
-    // Alphas are weights for different cost functions
-    // 0: Local alignment, 1: Global alignment, 2: Smoothness
-	float alphas[3] = {1, 0.04, 0.000};
 	b.fill(0);
 
-	// Photometric term from http://www.liushuaicheng.org/CVPR2017/DirectPhotometric.pdf
-	int LEVELS = 1;
-	int dist = 3;
-	vector<Mat> hor_grad(images.size());
-	vector<Mat> ver_grad(images.size());
-	vector<Mat> scaled_imgs(images.size());
-	//Ptr<Filter> hor_filter = cuda::createSobelFilter(CV_8UC3, CV_8UC3, 1, 0);
-	//Ptr<Filter> ver_filter = cuda::createSobelFilter(CV_8UC3, CV_8UC3, 0, 1);
-	for (int level = LEVELS; level > 0; --level) {
-		for (int i = 0; i < images.size(); ++i) {
-			resize(images[i], scaled_imgs[i], Size(), pow(2, -level), pow(2, -level));
-			//Sobel(scaled_imgs[i], hor_grad[i], CV_8UC3, 1, 0);
-			//Sobel(scaled_imgs[i], ver_grad[i], CV_8UC3, 0, 1);
-		}
-		//for (int y = 0; y < scaled_imgs[i].rows; y+=dist) {
-		//	for (int x = 0; x < scaled_imgs[i].cols; x+=dist) {
-		//	}
-		//}
-	}
-
-	
 	// Global alignment term from http://web.cecs.pdx.edu/~fliu/papers/cvpr2014-stitching.pdf
-	float a = alphas[1];
+	float a = ALPHAS[1];
 	int row = 0;
 	for (int idx = 0; idx < images.size(); ++idx) {
 		for (int i = 0; i < N; ++i) {
 			for (int j = 0; j < M; ++j) {
 				float x1 = j * mesh_size[idx].width / (M-1);
 				float y1 = i * mesh_size[idx].height / (N-1);
-				float tau = 1;
                 float scale = compose_scale / work_scale;
-                float max_dist = 5;
+				float tau = 1;
                 for (int ft = 0; ft < features[idx].keypoints.size(); ++ft) {
                     Point ft_point = features[idx].keypoints[ft].pt;
-                    if (sqrt(pow(ft_point.x * scale - x1, 2) + pow(ft_point.y * scale - y1, 2)) < max_dist) {
+                    if (sqrt(pow(ft_point.x * scale - x1, 2) + pow(ft_point.y * scale - y1, 2)) < GLOBAL_DIST) {
                         tau = 0;
                         break;
                     }
@@ -574,7 +553,7 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, v
 	}
 
 	// Smoothness term from http://web.cecs.pdx.edu/~fliu/papers/cvpr2014-stitching.pdf
-	a = alphas[2];
+	a = ALPHAS[2];
 	for (int idx = 0; idx < images.size(); ++idx) {
 		for (int i = 0; i < N-1; ++i) {
 			for (int j = 0; j < M-1; ++j) {
@@ -614,38 +593,43 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, v
 		}
 	}
 
-    for (int idx = 0; idx < NUM_IMAGES; ++idx) {
-        for (int i = 0; i < mesh_cpu_x[idx].rows - 1; ++i) {
-            for (int j = 0; j < mesh_cpu_x[idx].cols; ++j) {
-                Point start = Point(mesh_cpu_x[idx].at<float>(i, j), mesh_cpu_y[idx].at<float>(i, j));
-                Point end = Point(mesh_cpu_x[idx].at<float>(i + 1, j), mesh_cpu_y[idx].at<float>(i + 1, j));
-                line(images[idx], start, end, Scalar(255, 0, 0), 2);
+    if (VISUALIZE_MATCHES) { // Draw the meshes for visualisation
+        for (int idx = 0; idx < NUM_IMAGES; ++idx) {
+            for (int i = 0; i < mesh_cpu_x[idx].rows - 1; ++i) {
+                for (int j = 0; j < mesh_cpu_x[idx].cols; ++j) {
+                    Point start = Point(mesh_cpu_x[idx].at<float>(i, j), mesh_cpu_y[idx].at<float>(i, j));
+                    Point end = Point(mesh_cpu_x[idx].at<float>(i + 1, j), mesh_cpu_y[idx].at<float>(i + 1, j));
+                    line(images[idx], start, end, Scalar(255, 0, 0), 2);
+                }
             }
-        }
-        for (int i = 0; i < mesh_cpu_x[idx].rows; ++i) {
-            for (int j = 0; j < mesh_cpu_x[idx].cols - 1; ++j) {
-                Point start = Point(mesh_cpu_x[idx].at<float>(i, j), mesh_cpu_y[idx].at<float>(i, j));
-                Point end = Point(mesh_cpu_x[idx].at<float>(i, j + 1), mesh_cpu_y[idx].at<float>(i, j + 1));
-                line(images[idx], start, end, Scalar(255, 0, 0), 2);
+            for (int i = 0; i < mesh_cpu_x[idx].rows; ++i) {
+                for (int j = 0; j < mesh_cpu_x[idx].cols - 1; ++j) {
+                    Point start = Point(mesh_cpu_x[idx].at<float>(i, j), mesh_cpu_y[idx].at<float>(i, j));
+                    Point end = Point(mesh_cpu_x[idx].at<float>(i, j + 1), mesh_cpu_y[idx].at<float>(i, j + 1));
+                    line(images[idx], start, end, Scalar(255, 0, 0), 2);
+                }
             }
         }
     }
+
 	// Local alignment term from http://web.cecs.pdx.edu/~fliu/papers/cvpr2014-stitching.pdf
     float f = focal_length;
-    a = alphas[0];
+    a = ALPHAS[0];
 	for (int idx = 0; idx < pairwise_matches.size(); ++idx) {
         MatchesInfo &pw_matches = pairwise_matches[idx];
         if (pw_matches.confidence < CONF_THRESH) continue;
         if (!pw_matches.matches.size()) continue;
 		int src = pw_matches.src_img_idx;
 		int dst = pw_matches.dst_img_idx;
-        if (src == 9 || dst == 9 || abs(src - dst - 1) > 0.1) {
+        // Only calculate loss from pairs of src and dst where src = dst - 1
+        // to avoid using same pairs multiple times
+        if (abs(src - dst - 1) > 0.1) { 
             continue;
         }
-		for (int i = 0; i < features_per_image; ++i) {
-            int idx = rand() % pw_matches.matches.size();
+
+		for (int i = 0; i < min(features_per_image, (int)(pw_matches.matches.size() * 0.8f)); ++i) {
             while (1) {
-                idx = rand() % pw_matches.matches.size();
+                int idx = rand() % pw_matches.matches.size();
                 if (!pw_matches.inliers_mask[idx]) continue;
                 int idx1 = pw_matches.matches[idx].queryIdx;
                 int idx2 = pw_matches.matches[idx].trainIdx;
@@ -687,11 +671,13 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, v
                     continue;
                 }
 
-                /*circle(images[src], Point(x1_, y1_), 3, Scalar(0, 255, 0), 3);
-                circle(images[src], Point(x2_ + f * scale * theta, y2_), 3, Scalar(0, 0, 255), 3);
-                imshow(std::to_string(src), images[src]);
-                imshow(std::to_string(dst), images[dst]);
-                waitKey(0);*/
+                if(VISUALIZE_MATCHES) {
+                    circle(images[src], Point(x1_, y1_), 3, Scalar(0, 255, 0), 3);
+                    circle(images[src], Point(x2_ + f * scale * theta, y2_), 3, Scalar(0, 0, 255), 3);
+                    imshow(std::to_string(src), images[src]);
+                    imshow(std::to_string(dst), images[dst]);
+                    waitKey(0);
+                }
 
                 // Calculate in which rectangle the features are
                 int t1 = floor(y1_ * (N-1) / h1);
@@ -715,11 +701,6 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, v
                 float v1 = (y1_ - top1) / (bot1 - top1);
                 float v2 = (y2_ - top2) / (bot2 - top2);
 
-                float x11 = (1 - u1)*(1 - v1) * (left1) + u1*(1 - v1) * right1 + v1*(1 - u1) * left1 + u1*v1 * right1;
-                float x22 = (1 - u2)*(1 - v2) * (left2) + u2*(1 - v2) * right2 + v2*(1 - u2) * left2 + u2*v2 * right2;
-                float diff = x22 - x11;
-                float expected = theta * f * scale;
-                float y = (1 - u1)*(1 - v1) * top1 + u1*(1 - v1) * top1 + v1*(1 - u1) * bot1 + u1*v1 * bot1;
                 // _x_ - _x2_ = theta * f * scale
                 A.insert(row,  2*(l1   + M * (t1)   + M*N*src)) = (1-u1)*(1-v1) * a;
                 A.insert(row,  2*(l1+1 + M * (t1)   + M*N*src)) = u1*(1-v1) * a;
@@ -757,6 +738,8 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, v
     cuda::GpuMat big_y;
 	Mat big_mesh_x;
 	Mat big_mesh_y;
+    // Convert the mesh into a backward map used by opencv remap function
+    // @TODO implement this in CUDA so it can be run entirely on GPU
 	for (int idx = 0; idx < full_imgs.size(); ++idx) {
         for (int i = 0; i < N; ++i) {
             for (int j = 0; j < M; ++j) {
@@ -764,74 +747,59 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, v
                 mesh_cpu_y[idx].at<float>(i, j) = x(2 * (j + i*M + idx*M*N) + 1);
             }
         }
-        if (true) {
-            bool debug = false;
-            if (debug) {
-                Mat mat(mesh_size[idx].height, mesh_size[idx].width, CV_16UC3);
-                for (int i = 0; i < mesh_cpu_x[idx].rows - 1; ++i) {
-                    for (int j = 0; j < mesh_cpu_x[idx].cols; ++j) {
-                        Point start = Point(mesh_cpu_x[idx].at<float>(i, j), mesh_cpu_y[idx].at<float>(i, j));
-                        Point end = Point(mesh_cpu_x[idx].at<float>(i + 1, j), mesh_cpu_y[idx].at<float>(i + 1, j));
-                        line(mat, start, end, Scalar(1, 0, 0), 3);
-                    }
-                }
-                for (int i = 0; i < mesh_cpu_x[idx].rows; ++i) {
-                    for (int j = 0; j < mesh_cpu_x[idx].cols - 1; ++j) {
-                        Point start = Point(mesh_cpu_x[idx].at<float>(i, j), mesh_cpu_y[idx].at<float>(i, j));
-                        Point end = Point(mesh_cpu_x[idx].at<float>(i, j + 1), mesh_cpu_y[idx].at<float>(i, j + 1));
-                        line(mat, start, end, Scalar(1, 0, 0), 3);
-                    }
-                }
-                imshow(std::to_string(idx), mat);
-                waitKey();
-            }
-            // Treat the calculated values as a forward map.
-            // This means they have to be converted to a backward map.
-            gpu_small_mesh_x.upload(mesh_cpu_x[idx]);
-            gpu_small_mesh_y.upload(mesh_cpu_y[idx]);
-            custom_resize(gpu_small_mesh_x, big_x, mesh_size[idx]);
-            custom_resize(gpu_small_mesh_y, big_y, mesh_size[idx]);
-            big_x.download(big_mesh_x);
-            big_y.download(big_mesh_y);
-            //resize(mesh_cpu_x[idx], big_mesh_x, mesh_size[idx], 0, 0, INTER_LINEAR);
-            //resize(mesh_cpu_y[idx], big_mesh_y, mesh_size[idx], 0, 0, INTER_LINEAR);
+        // Interpolate pixel positions between the mesh vertices by using a custom resize function
+        gpu_small_mesh_x.upload(mesh_cpu_x[idx]);
+        gpu_small_mesh_y.upload(mesh_cpu_y[idx]);
+        custom_resize(gpu_small_mesh_x, big_x, mesh_size[idx]);
+        custom_resize(gpu_small_mesh_y, big_y, mesh_size[idx]);
+        big_x.download(big_mesh_x);
+        big_y.download(big_mesh_y);
 
-            int scale = 2;
-            Mat warp_x(mesh_size[idx].height / scale, mesh_size[idx].width / scale, mesh_cpu_x[idx].type());
-            Mat warp_y(mesh_size[idx].height / scale, mesh_size[idx].width / scale, mesh_cpu_y[idx].type());
-            Mat set_values(mesh_size[idx].height / scale, mesh_size[idx].width / scale, CV_32F);
-            set_values.setTo(Scalar::all(0));
-            warp_x.setTo(Scalar::all(0));
-            warp_y.setTo(Scalar::all(0));
-            for (int i = 0; i < mesh_size[idx].height; ++i) {
-                for (int j = 0; j < mesh_size[idx].width; ++j) {
-                    int x = (int)big_mesh_x.at<float>(i, j) / scale;
-                    int y = (int)big_mesh_y.at<float>(i, j) / scale;
-                    if (x >= 0 && y >= 0 && x < warp_x.cols && y < warp_x.rows) {
-                        if (!set_values.at<float>(y, x)) {
-                            warp_x.at<float>(y, x) = (float)j;
-                            warp_y.at<float>(y, x) = (float)i;
-                            set_values.at<float>(y, x) = 1;
-                        }
+        // Calculate pixel values for a map half the width and height and then resize the map back to
+        // full size
+        int scale = 2;
+        Mat warp_x(mesh_size[idx].height / scale, mesh_size[idx].width / scale, mesh_cpu_x[idx].type());
+        Mat warp_y(mesh_size[idx].height / scale, mesh_size[idx].width / scale, mesh_cpu_y[idx].type());
+        Mat set_values(mesh_size[idx].height / scale, mesh_size[idx].width / scale, CV_32F);
+        set_values.setTo(Scalar::all(0));
+        warp_x.setTo(Scalar::all(0));
+        warp_y.setTo(Scalar::all(0));
+        for (int i = 0; i < mesh_size[idx].height; ++i) {
+            for (int j = 0; j < mesh_size[idx].width; ++j) {
+                int x = (int)big_mesh_x.at<float>(i, j) / scale;
+                int y = (int)big_mesh_y.at<float>(i, j) / scale;
+                if (x >= 0 && y >= 0 && x < warp_x.cols && y < warp_x.rows) {
+                    if (!set_values.at<float>(y, x)) {
+                        warp_x.at<float>(y, x) = (float)j;
+                        warp_y.at<float>(y, x) = (float)i;
+                        set_values.at<float>(y, x) = 1;
                     }
                 }
             }
-            //resize(warp_x, big_mesh_x, mesh_size[idx]);
-            //resize(warp_y, big_mesh_y, mesh_size[idx]);
-            gpu_small_mesh_x.upload(warp_x);
-            gpu_small_mesh_y.upload(warp_y);
-            custom_resize(gpu_small_mesh_x, x_mesh[idx], mesh_size[idx]);
-            custom_resize(gpu_small_mesh_y, y_mesh[idx], mesh_size[idx]);
-        } else {
-            // Treat the calculated values as a backward map
-            gpu_small_mesh_x.upload(mesh_cpu_x[idx]);
-            gpu_small_mesh_y.upload(mesh_cpu_y[idx]);
-            cuda::resize(gpu_small_mesh_x, x_mesh[idx], mesh_size[idx]);
-            cuda::resize(gpu_small_mesh_y, y_mesh[idx], mesh_size[idx]);
-            x_mesh[idx].adjustROI(0, -mesh_size[idx].height / N, 0, -mesh_size[idx].width / M);
-            y_mesh[idx].adjustROI(0, -mesh_size[idx].height / N, 0, -mesh_size[idx].width / M);
-            cuda::resize(x_mesh[idx], x_mesh[idx], mesh_size[idx]);
-            cuda::resize(y_mesh[idx], y_mesh[idx], mesh_size[idx]);
+        }
+        gpu_small_mesh_x.upload(warp_x);
+        gpu_small_mesh_y.upload(warp_y);
+        custom_resize(gpu_small_mesh_x, x_mesh[idx], mesh_size[idx]);
+        custom_resize(gpu_small_mesh_y, y_mesh[idx], mesh_size[idx]);
+
+        if (VISUALIZE_WARPED) {
+            Mat mat(mesh_size[idx].height, mesh_size[idx].width, CV_16UC3);
+            for (int i = 0; i < mesh_cpu_x[idx].rows - 1; ++i) {
+                for (int j = 0; j < mesh_cpu_x[idx].cols; ++j) {
+                    Point start = Point(mesh_cpu_x[idx].at<float>(i, j), mesh_cpu_y[idx].at<float>(i, j));
+                    Point end = Point(mesh_cpu_x[idx].at<float>(i + 1, j), mesh_cpu_y[idx].at<float>(i + 1, j));
+                    line(mat, start, end, Scalar(1, 0, 0), 3);
+                }
+            }
+            for (int i = 0; i < mesh_cpu_x[idx].rows; ++i) {
+                for (int j = 0; j < mesh_cpu_x[idx].cols - 1; ++j) {
+                    Point start = Point(mesh_cpu_x[idx].at<float>(i, j), mesh_cpu_y[idx].at<float>(i, j));
+                    Point end = Point(mesh_cpu_x[idx].at<float>(i, j + 1), mesh_cpu_y[idx].at<float>(i, j + 1));
+                    line(mat, start, end, Scalar(1, 0, 0), 3);
+                }
+            }
+            imshow(std::to_string(idx), mat);
+            waitKey();
         }
 	}
 }
