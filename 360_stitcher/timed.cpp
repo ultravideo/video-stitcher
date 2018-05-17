@@ -49,6 +49,7 @@ std::string base = "still";
 int skip_frames = 0;
 bool wrapAround = true;
 bool recalibrate = false;
+bool enable_local = true;
 bool save_video = false;
 int const NUM_IMAGES = 6;
 //int offsets[NUM_IMAGES] = {0, 37, 72, 72, 37}; // static
@@ -445,6 +446,7 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 	Ptr<cuda::Filter> dilation_filter = cuda::createMorphologyFilter(MORPH_DILATE, CV_8U, Mat());
 	for (int img_idx = 0; img_idx < NUM_IMAGES; img_idx++)
 	{
+        gpu_mask_warped.release();
 		img_size = full_img[img_idx].size();
 		img_size = Size((int)(img_size.width * compose_scale), (int)(img_size.height * compose_scale));
 		full_img[img_idx].release();
@@ -485,8 +487,8 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, vector<MatchesInfo> &pairwise_matches, vector<cuda::GpuMat> &x_mesh, vector<cuda::GpuMat> &y_mesh,
 					   vector<cuda::GpuMat> &x_maps, vector<cuda::GpuMat> &y_maps, float focal_length, double compose_scale, double work_scale) {
 	int64 t = getTickCount();
-	int N = 5;
-	int M = 5;
+	int N = 2;
+	int M = 2;
 	vector<Size> mesh_size(full_imgs.size());
 	vector<Mat> images(full_imgs.size());
 	vector<Mat> mesh_cpu_x(full_imgs.size());
@@ -514,11 +516,13 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, v
         }
     }
 
-    int features_per_image = 10;
+    int features_per_image = 50;
 	int num_rows = 2 * images.size()*N*M + 2*images.size()*(N-1)*(M-1) + 2 * pairwise_matches.size() * features_per_image;
 	Eigen::SparseMatrix<double> A(num_rows, 2*N*M*images.size());
 	Eigen::VectorXd b(num_rows), x;
-	float alphas[3] = {1, 0.01, 0.001};
+    // Alphas are weights for different cost functions
+    // 0: Local alignment, 1: Global alignment, 2: Smoothness
+	float alphas[3] = {1, 0.04, 0.000};
 	b.fill(0);
 
 	// Photometric term from http://www.liushuaicheng.org/CVPR2017/DirectPhotometric.pdf
@@ -869,12 +873,15 @@ bool stitch_calib(vector<vector<Mat>> full_img, vector<CameraParams> &cameras, v
 
 	times[3] = std::chrono::high_resolution_clock::now();
 
-	warpImages(full_img[full_img.size()-1], full_img_size, cameras, blender, compensator, work_scale, seam_scale, seam_work_aspect,
-			   x_maps, y_maps, compose_scale, warped_image_scale, blend_width);
+	warpImages(full_img[full_img.size()-1], full_img_size, cameras, blender, compensator,
+               work_scale, seam_scale, seam_work_aspect, x_maps, y_maps, compose_scale,
+               warped_image_scale, blend_width);
 	times[3] = std::chrono::high_resolution_clock::now();
 
-	calibrateMeshWarp(full_img[full_img.size()-1], features, pairwise_matches, x_mesh, y_mesh,
-                      x_maps, y_maps, cameras[0].focal, compose_scale, work_scale);
+    if (enable_local) {
+        calibrateMeshWarp(full_img[full_img.size() - 1], features, pairwise_matches, x_mesh, y_mesh,
+                          x_maps, y_maps, cameras[0].focal, compose_scale, work_scale);
+    }
 	times[4] = std::chrono::high_resolution_clock::now();
 	return true;
 }
@@ -921,10 +928,15 @@ void stitch_online(double compose_scale, Mat &img, cuda::GpuMat &x_map, cuda::Gp
 	}
 	gc->apply_gpu(img_num, Point(), images[img_num], cuda::GpuMat());
 
-	// Warp the image according to a mesh
-	cuda::remap(images[img_num], warped_images[img_num], x_mesh, y_mesh, INTER_LINEAR, BORDER_CONSTANT, Scalar(0), stream);
-
-    mb->update_mask(img_num, x_mesh, y_mesh, stream);
+    if (enable_local) {
+        // Warp the image and the mask according to a mesh
+        cuda::remap(images[img_num], warped_images[img_num], x_mesh, y_mesh, INTER_LINEAR, BORDER_CONSTANT, Scalar(0), stream);
+        mb->update_mask(img_num, x_mesh, y_mesh, stream);
+    }
+    else
+    {
+        warped_images[img_num] = images[img_num];
+    }
 	
 	//filter->apply(images[img_num], images[img_num], stream);
 	if (img_num == printing) {
