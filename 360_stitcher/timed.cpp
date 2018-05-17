@@ -574,13 +574,25 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, v
 				float u2 = (dx2*x2-dx2*x3+dy2*y2-dy2*y3)/(dx2*dx2+dy2*dy2);
 				float v2 = (-dx2*y2+dx2*y3+x2*dy2-x3*dy2)/(dx2*dx2+dy2*dy2);
 
-                float sal = 1; // Salience of the triangle. To be implemented
+                float sal; // Salience of the triangle. Using 0.5f + l2-norm of color values of the triangle
+
+                Mat mask(images[idx].rows, images[idx].cols, CV_8UC1);
+                mask.setTo(Scalar::all(0));
+                Point pts[3] = { Point(x1, y1), Point(x2, y1), Point(y2, x1) };
+                fillConvexPoly(mask, pts, 3, Scalar(1));
+                sal = 0.5f + norm(images[idx], NORM_L2, mask) / (255*255);
+                
 				A.insert(row,   2*(j + M * i + M*N*idx)) = a * sal; // x1
 				A.insert(row,   2*(j + M * i + M*N*idx) + 1) = a * sal; // y1
 				A.insert(row,   2*(j + M * (i+1) + M*N*idx)) = a*(u + v - 1) * sal; // x2
 				A.insert(row,   2*(j + M * (i+1) + M*N*idx) + 1) = a*(u - v - 1) * sal; // y2
 				A.insert(row,   2*(j+1 + M * i + M*N*idx)) = a*(-u - v) * sal; // x3
 				A.insert(row,   2*(j+1 + M * i + M*N*idx) + 1) = a*(-u + v) * sal; // y3
+
+                mask.setTo(Scalar::all(0));
+                Point pts2[3] = { Point(x2, y1), Point(x1, y2), Point(y2, x2) };
+                fillConvexPoly(mask, pts2, 3, Scalar(1));
+                sal = 0.5f + norm(images[idx], NORM_L2, mask) / (255*255);
 
 				A.insert(row+1, 2*(j + M * (i+1) + M*N*idx)) = a * sal; // x2
 				A.insert(row+1, 2*(j + M * (i+1) + M*N*idx) + 1) = a * sal; // y2
@@ -630,7 +642,9 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, v
 		for (int i = 0; i < min(features_per_image, (int)(pw_matches.matches.size() * 0.8f)); ++i) {
             while (1) {
                 int idx = rand() % pw_matches.matches.size();
+                // Only use inlier matches
                 if (!pw_matches.inliers_mask[idx]) continue;
+
                 int idx1 = pw_matches.matches[idx].queryIdx;
                 int idx2 = pw_matches.matches[idx].trainIdx;
                 KeyPoint k1 = features[src].keypoints[idx1];
@@ -665,7 +679,7 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, v
                 h2 = images[dst].rows;
                 w2 = images[dst].cols;
 
-                // Ignore features which have warped outside of one image
+                // Ignore features which have been warped outside of either image
                 if (x1_ < 0 || x2_ < 0 || y1_ < 0 || y2_ < 0 || x1_ >= w1 || x2_ >= w2
                         || y1_ >= h1 || y2_ >= h2 ) {
                     continue;
