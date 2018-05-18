@@ -1,8 +1,7 @@
+#include "networking.h"
 #include <iostream>
 #include <string>
 #include <Windows.h>
-#include "blockingqueue.h"
-#include "barrier.h"
 #include "opencv2/opencv_modules.hpp"
 #include <opencv2/core/utility.hpp>
 #include "opencv2/imgcodecs.hpp"
@@ -23,6 +22,8 @@
 #include "opencv2/cudaarithm.hpp"
 #include "opencv2/cudafeatures2d.hpp"
 #include "opencv2/calib3d.hpp"
+
+#include "blockingqueue.h"
 
 #include <fstream>
 #include <thread>
@@ -46,6 +47,7 @@ int skip_frames = 220;
 bool wrapAround = false;
 bool recalibrate = false;
 bool save_video = false;
+bool use_stream = true;
 int const NUM_IMAGES = 5;
 int offsets[NUM_IMAGES] = {0, 37, 72, 72, 37}; // static
 //int offsets[NUM_IMAGES] = {0, 0, 0, 0, 0, 0}; // dynamic
@@ -289,7 +291,6 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 				float &warped_image_scale,  float &blend_width) {
 	//times[0] = std::chrono::high_resolution_clock::now();
 	// STEP 3: warping images // ------------------------------------------------------------------------------------------------
-
 	cuda::Stream stream;
 	vector<cuda::GpuMat> gpu_imgs(NUM_IMAGES);
 	vector<cuda::GpuMat> gpu_seam_imgs(NUM_IMAGES);
@@ -358,7 +359,6 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 	//times[1] = std::chrono::high_resolution_clock::now();
 
 	//  STEP 5: composing panorama // -------------------------------------------------------------------------------------------
-
 	double compose_work_aspect = 1;
 
 	// Negative value means compose in original resolution
@@ -453,7 +453,7 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 		cuda::resize(gpu_seam_mask, gpu_seam_mask, gpu_mask_warped.size(), 0.0, 0.0, 1);
 		cuda::bitwise_and(gpu_seam_mask, gpu_mask_warped, gpu_mask_warped, noArray());
 
-		// Blend the current image
+		// Calculate mask pyramid for online process
 		mb->init_gpu(gpu_img, gpu_mask_warped, corners[img_idx]);
 	}
 	//times[3] = std::chrono::high_resolution_clock::now();
@@ -633,22 +633,36 @@ bool getImages(vector<VideoCapture> caps, vector<Mat> &images, int skip=0) {
 	return true;
 }
 
+bool getImages(vector<BlockingQueue<Mat>> &queues, vector<Mat> &images) {
+	for (int i = 0; i < NUM_IMAGES; ++i) {
+		images[i] = queues[i].pop();
+	}
+	return true;
+}
+
 int main(int argc, char* argv[])
 {
+	vector<BlockingQueue<Mat>> que(NUM_IMAGES);
+	if (startPolling(que)) {
+		return -1;
+	}
+
 	LOGLN("");
 	//cuda::printCudaDeviceInfo(0);
 	cuda::printShortCudaDeviceInfo(0);
 
 	// Videofeed input --------------------------------------------------------
 	
-	for(int i = 0; i < NUM_IMAGES; ++i) {
-		CAPTURES.push_back(VideoCapture(video_files[i]));
-		if(!CAPTURES[i].isOpened()) {
-			LOGLN("ERROR: Unable to open videofile(s).");
-			return -1;
-		}
-		CAPTURES[i].set(CV_CAP_PROP_POS_FRAMES, skip_frames + offsets[i]);
-	}
+    if (!use_stream) {
+        for (int i = 0; i < NUM_IMAGES; ++i) {
+            CAPTURES.push_back(VideoCapture(video_files[i]));
+            if (!CAPTURES[i].isOpened()) {
+                LOGLN("ERROR: Unable to open videofile(s).");
+                return -1;
+            }
+            CAPTURES[i].set(CV_CAP_PROP_POS_FRAMES, skip_frames + offsets[i]);
+        }
+    }
 	// ------------------------------------------------------------------------
 
 	// OFFLINE CALIBRATION // ---------------------------------------------------------------------------------------------------
@@ -673,10 +687,16 @@ int main(int argc, char* argv[])
 	vector<CameraParams> cameras;
 	vector<vector<Mat>> full_img(INIT_FRAME_AMT);
 	for (int i = 0; i < INIT_FRAME_AMT; ++i) {
-		if (!getImages(CAPTURES, full_img[i], INIT_SKIPS)) {
-			LOGLN("Couldn't read images");
-			return -1;
-		}
+        bool ret;
+        if (use_stream) {
+            ret = getImages(que, full_img[i]);
+        } else {
+            ret = getImages(CAPTURES, full_img[i], INIT_SKIPS);
+        }
+        if (!ret) {
+            LOGLN("Couldn't read images");
+            return -1;
+        }
 	}
 	//if (!stitch_calib(x_maps, y_maps, compose_scale, blender, blend_width, full_img_size, corners, sizes))
 	if (!stitch_calib(full_img, cameras, x_maps, y_maps, work_scale, seam_scale, seam_work_aspect, compose_scale, blender, compensator, warped_image_scale, blend_width, full_img_size))
@@ -745,17 +765,18 @@ int main(int argc, char* argv[])
 	while(1) 
 	{
 		vector<Mat> input;
-		bool capped = getImages(CAPTURES, input);
+		bool capped;
+		if (use_stream) {
+			capped = getImages(que, input);
+		} else {
+			capped = getImages(CAPTURES, input);
+		}
 		if (!capped) {
 			break;
 		}
 		if (frame_amt && (frame_amt % RECALIB_DEL == 0) && recalibrate) {
 			int64 t = getTickCount();
 			blender = Blender::createDefault(Blender::MULTI_BAND, true);
-			//x_maps = vector<cuda::GpuMat>(NUM_IMAGES);
-			//y_maps = vector<cuda::GpuMat>(NUM_IMAGES);
-			//warpImages(input, full_img_size, cameras, blender, work_scale, seam_scale, seam_work_aspect, x_maps, y_maps,
-			//		   compose_scale, warped_image_scale, blend_width);
 			if (!stitch_calib(full_img, cameras, x_maps, y_maps, work_scale, seam_scale, seam_work_aspect, compose_scale, blender, compensator, warped_image_scale, blend_width, full_img_size))
 			{
 				LOGLN("");

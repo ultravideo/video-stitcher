@@ -125,11 +125,13 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="barrier.cpp" />
+    <ClCompile Include="networking.cpp" />
     <ClCompile Include="timed.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="barrier.h" />
     <ClInclude Include="blockingqueue.h" />
+    <ClInclude Include="networking.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
