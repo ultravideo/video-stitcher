@@ -23,7 +23,6 @@
 #include "opencv2/cudafeatures2d.hpp"
 
 #include "blockingqueue.h"
-#include "barrier.h"
 
 #include <fstream>
 #include <thread>
@@ -47,7 +46,7 @@ int skip_frames = 220;
 bool wrapAround = false;
 bool recalibrate = false;
 bool save_video = false;
-bool use_stream = false;
+bool use_stream = true;
 int const NUM_IMAGES = 5;
 int offsets[NUM_IMAGES] = {0, 37, 72, 72, 37}; // static
 //int offsets[NUM_IMAGES] = {0, 0, 0, 0, 0, 0}; // dynamic
@@ -596,30 +595,18 @@ bool getImages(vector<VideoCapture> caps, vector<Mat> &images, int skip=0) {
 	return true;
 }
 
-/*bool getImages(vector<BlockingQueue<Mat>> queues, vector<Mat> &images) {
+bool getImages(vector<BlockingQueue<Mat>> &queues, vector<Mat> &images) {
 	for (int i = 0; i < NUM_IMAGES; ++i) {
 		images[i] = queues[i].pop();
 	}
 	return true;
-}*/
+}
 
 int main(int argc, char* argv[])
 {
-	vector<BlockingQueue<Mat>> que(1);
-	std::thread in_th;
-
-	if (startPolling(que, in_th)) {
+	vector<BlockingQueue<Mat>> que(NUM_IMAGES);
+	if (startPolling(que)) {
 		return -1;
-	}
-    LOGLN("Listening");
-	Sleep(3000);
-	while (1) {
-		//Sleep(1000);
-		for (int i = 0; i < 1; ++i) {
-			Mat mat = que[0].pop();
-			imshow("Image", mat);
-			waitKey(17);
-		}
 	}
 
 	LOGLN("");
@@ -628,14 +615,16 @@ int main(int argc, char* argv[])
 
 	// Videofeed input --------------------------------------------------------
 	
-	for(int i = 0; i < NUM_IMAGES; ++i) {
-		CAPTURES.push_back(VideoCapture(video_files[i]));
-		if(!CAPTURES[i].isOpened()) {
-			LOGLN("ERROR: Unable to open videofile(s).");
-			return -1;
-		}
-		CAPTURES[i].set(CV_CAP_PROP_POS_FRAMES, skip_frames + offsets[i]);
-	}
+    if (!use_stream) {
+        for (int i = 0; i < NUM_IMAGES; ++i) {
+            CAPTURES.push_back(VideoCapture(video_files[i]));
+            if (!CAPTURES[i].isOpened()) {
+                LOGLN("ERROR: Unable to open videofile(s).");
+                return -1;
+            }
+            CAPTURES[i].set(CV_CAP_PROP_POS_FRAMES, skip_frames + offsets[i]);
+        }
+    }
 	// ------------------------------------------------------------------------
 
 	// OFFLINE CALIBRATION // ---------------------------------------------------------------------------------------------------
@@ -660,10 +649,16 @@ int main(int argc, char* argv[])
 	vector<CameraParams> cameras;
 	vector<vector<Mat>> full_img(INIT_FRAME_AMT);
 	for (int i = 0; i < INIT_FRAME_AMT; ++i) {
-		if (!getImages(CAPTURES, full_img[i], INIT_SKIPS)) {
-			LOGLN("Couldn't read images");
-			return -1;
-		}
+        bool ret;
+        if (use_stream) {
+            ret = getImages(que, full_img[i]);
+        } else {
+            ret = getImages(CAPTURES, full_img[i], INIT_SKIPS);
+        }
+        if (!ret) {
+            LOGLN("Couldn't read images");
+            return -1;
+        }
 	}
 	//if (!stitch_calib(x_maps, y_maps, compose_scale, blender, blend_width, full_img_size, corners, sizes))
 	if (!stitch_calib(full_img, cameras, x_maps, y_maps, work_scale, seam_scale, seam_work_aspect, compose_scale, blender, compensator, warped_image_scale, blend_width, full_img_size))
@@ -734,7 +729,7 @@ int main(int argc, char* argv[])
 		vector<Mat> input;
 		bool capped;
 		if (use_stream) {
-			//capped = getImages(que, input);
+			capped = getImages(que, input);
 		} else {
 			capped = getImages(CAPTURES, input);
 		}
@@ -744,10 +739,6 @@ int main(int argc, char* argv[])
 		if (frame_amt && (frame_amt % RECALIB_DEL == 0) && recalibrate) {
 			int64 t = getTickCount();
 			blender = Blender::createDefault(Blender::MULTI_BAND, true);
-			//x_maps = vector<cuda::GpuMat>(NUM_IMAGES);
-			//y_maps = vector<cuda::GpuMat>(NUM_IMAGES);
-			//warpImages(input, full_img_size, cameras, blender, work_scale, seam_scale, seam_work_aspect, x_maps, y_maps,
-			//		   compose_scale, warped_image_scale, blend_width);
 			if (!stitch_calib(full_img, cameras, x_maps, y_maps, work_scale, seam_scale, seam_work_aspect, compose_scale, blender, compensator, warped_image_scale, blend_width, full_img_size))
 			{
 				LOGLN("");

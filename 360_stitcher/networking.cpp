@@ -9,7 +9,7 @@
 #define DEFAULT_PORT "6666"
 #define DEFAULT_ADDRESS NULL
 
-int startPolling(std::vector<BlockingQueue<cv::Mat>> &queues, std::thread &th)
+int startPolling(std::vector<BlockingQueue<cv::Mat>> &queues)
 {
     WSADATA wsaData;
     int iResult;
@@ -73,7 +73,8 @@ int startPolling(std::vector<BlockingQueue<cv::Mat>> &queues, std::thread &th)
         return 1;
     }
 
-	th = std::thread(pollClients, ListenSocket, std::ref(queues));
+	std::thread th = std::thread(pollClients, ListenSocket, std::ref(queues));
+    th.detach();
 	return 0;
 }
 
@@ -110,7 +111,7 @@ void pollFrames(SOCKET ConnectSocket, BlockingQueue<cv::Mat> &queue)
 
 		if (index >= IMG_WIDTH * IMG_HEIGHT * CHANNELS) {
 			index = 0;
-			//cv::cvtColor(mat, mat, CV_RGBA2BGR);
+			cv::cvtColor(mat, mat, CV_GRAY2BGR);
 			queue.push(mat);
 
 			mat = cv::Mat(cv::Size(IMG_WIDTH, IMG_HEIGHT), CV_8UC1);

@@ -8,7 +8,7 @@
 #pragma comment (lib, "Mswsock.lib")
 #pragma comment (lib, "AdvApi32.lib")
 
-int startPolling(std::vector<BlockingQueue<cv::Mat>> &queue, std::thread &th);
+int startPolling(std::vector<BlockingQueue<cv::Mat>> &queue);
 
 void pollFrames(SOCKET ConnectSocket, BlockingQueue<cv::Mat> &queue);
 
