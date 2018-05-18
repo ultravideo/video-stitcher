@@ -49,9 +49,10 @@ bool recalibrate = false;
 bool save_video = false;
 bool use_stream = true;
 bool debug_stream = true;
-int const NUM_IMAGES = 5;
-int offsets[NUM_IMAGES] = {0, 37, 72, 72, 37}; // static
+int const NUM_IMAGES = 2;
+//int offsets[NUM_IMAGES] = {0, 37, 72, 72, 37}; // static
 //int offsets[NUM_IMAGES] = {0, 0, 0, 0, 0, 0}; // dynamic
+int offsets[NUM_IMAGES] = {0};
 int const INIT_FRAME_AMT = 1;
 int const INIT_SKIPS = 0;
 int const RECALIB_DEL = 2;
@@ -133,6 +134,8 @@ void matchFeatures(vector<ImageFeatures> &features, vector<MatchesInfo> &pairwis
 	for (int i = 0; i < pairwise_matches.size(); ++i) {
 		int idx1 = (i + 1 == NUM_IMAGES) ? i-1 : i;
 		int idx2 = (i + 1 == NUM_IMAGES) ? 0 : i+1;
+		pairwise_matches[i].src_img_idx = idx1;
+		pairwise_matches[i].dst_img_idx = idx2;
 		ImageFeatures f1 = features[idx1];
 		ImageFeatures f2 = features[idx2];
 		vector<vector<DMatch>> matches;
@@ -144,39 +147,39 @@ void matchFeatures(vector<ImageFeatures> &features, vector<MatchesInfo> &pairwis
 		}
 		Mat src_points(1, static_cast<int>(pairwise_matches[i].matches.size()), CV_32FC2);
 		Mat dst_points(1, static_cast<int>(pairwise_matches[i].matches.size()), CV_32FC2);
-		for (int j = 0; j < pairwise_matches[i].matches.size(); ++j) {
-			const DMatch& m = pairwise_matches[i].matches[j];
+        if (pairwise_matches[i].matches.size()) {
+            for (int j = 0; j < pairwise_matches[i].matches.size(); ++j) {
+                const DMatch& m = pairwise_matches[i].matches[j];
 
-			Point2f p = f1.keypoints[m.queryIdx].pt;
-			p.x -= f1.img_size.width * 0.5f;
-			p.y -= f1.img_size.height * 0.5f;
-			src_points.at<Point2f>(0, static_cast<int>(j)) = p;
+                Point2f p = f1.keypoints[m.queryIdx].pt;
+                p.x -= f1.img_size.width * 0.5f;
+                p.y -= f1.img_size.height * 0.5f;
+                src_points.at<Point2f>(0, static_cast<int>(j)) = p;
 
-			p = f2.keypoints[m.trainIdx].pt;
-			p.x -= f2.img_size.width * 0.5f;
-			p.y -= f2.img_size.height * 0.5f;
-			dst_points.at<Point2f>(0, static_cast<int>(j)) = p;
-		}
-		pairwise_matches[i].src_img_idx = idx1;
-		pairwise_matches[i].dst_img_idx = idx2;
+                p = f2.keypoints[m.trainIdx].pt;
+                p.x -= f2.img_size.width * 0.5f;
+                p.y -= f2.img_size.height * 0.5f;
+                dst_points.at<Point2f>(0, static_cast<int>(j)) = p;
+            }
 
-		// Find pair-wise motion
-		pairwise_matches[i].H = findHomography(src_points, dst_points, pairwise_matches[i].inliers_mask, RANSAC);
+            // Find pair-wise motion
+            pairwise_matches[i].H = findHomography(src_points, dst_points, pairwise_matches[i].inliers_mask, RANSAC);
 
-		// Find number of inliers
-		pairwise_matches[i].num_inliers = 0;
-		for (size_t i = 0; i < pairwise_matches[i].inliers_mask.size(); ++i)
-			if (pairwise_matches[i].inliers_mask[i])
-				pairwise_matches[i].num_inliers++;
+            // Find number of inliers
+            pairwise_matches[i].num_inliers = 0;
+            for (size_t idx = 0; idx < pairwise_matches[i].inliers_mask.size(); ++idx)
+                if (pairwise_matches[i].inliers_mask[idx])
+                    pairwise_matches[i].num_inliers++;
 
-		// Confidence calculation copied from opencv feature matching code
-		// These coeffs are from paper M. Brown and D. Lowe. "Automatic Panoramic Image Stitching
-		// using Invariant Features"
-		pairwise_matches[i].confidence = pairwise_matches[i].num_inliers / (8 + 0.3 * pairwise_matches[i].matches.size());
+            // Confidence calculation copied from opencv feature matching code
+            // These coeffs are from paper M. Brown and D. Lowe. "Automatic Panoramic Image Stitching
+            // using Invariant Features"
+            pairwise_matches[i].confidence = pairwise_matches[i].num_inliers / (8 + 0.3 * pairwise_matches[i].matches.size());
 
-		// Set zero confidence to remove matches between too close images, as they don't provide
-		// additional information anyway. The threshold was set experimentally.
-		pairwise_matches[i].confidence = pairwise_matches[i].confidence > 3. ? 0. : pairwise_matches[i].confidence;
+            // Set zero confidence to remove matches between too close images, as they don't provide
+            // additional information anyway. The threshold was set experimentally.
+            pairwise_matches[i].confidence = pairwise_matches[i].confidence > 3. ? 0. : pairwise_matches[i].confidence;
+        }
 
 		pairwise_matches[i].confidence = 1;
 	}
@@ -636,7 +639,7 @@ bool getImages(vector<VideoCapture> caps, vector<Mat> &images, int skip=0) {
 
 bool getImages(vector<BlockingQueue<Mat>> &queues, vector<Mat> &images) {
 	for (int i = 0; i < NUM_IMAGES; ++i) {
-		images[i] = queues[i].pop();
+		images.push_back(queues[i].pop());
 	}
 	return true;
 }
@@ -654,8 +657,8 @@ int main(int argc, char* argv[])
             for (int i = 0; i < NUM_IMAGES; ++i) {
                 Mat mat = que[i].pop();
                 imshow(std::to_string(i), mat);
-                waitKey(17);
             }
+            waitKey(1);
         }
     }
 
