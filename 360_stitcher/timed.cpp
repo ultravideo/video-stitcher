@@ -596,12 +596,12 @@ bool getImages(vector<VideoCapture> caps, vector<Mat> &images, int skip=0) {
 	return true;
 }
 
-bool getImages(vector<BlockingQueue<Mat>> queues, vector<Mat> &images) {
+/*bool getImages(vector<BlockingQueue<Mat>> queues, vector<Mat> &images) {
 	for (int i = 0; i < NUM_IMAGES; ++i) {
 		images[i] = queues[i].pop();
 	}
 	return true;
-}
+}*/
 
 int main(int argc, char* argv[])
 {
@@ -611,6 +611,7 @@ int main(int argc, char* argv[])
 	if (startPolling(que, in_th)) {
 		return -1;
 	}
+    LOGLN("Listening");
 	Sleep(3000);
 	while (1) {
 		//Sleep(1000);
@@ -733,7 +734,7 @@ int main(int argc, char* argv[])
 		vector<Mat> input;
 		bool capped;
 		if (use_stream) {
-			capped = getImages(que, input);
+			//capped = getImages(que, input);
 		} else {
 			capped = getImages(CAPTURES, input);
 		}

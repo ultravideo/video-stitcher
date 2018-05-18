@@ -10,4 +10,6 @@
 
 int startPolling(std::vector<BlockingQueue<cv::Mat>> &queue, std::thread &th);
 
-void pollFrames(SOCKET &ConnectSocket, std::vector<BlockingQueue<cv::Mat>> &queue);
+void pollFrames(SOCKET ConnectSocket, BlockingQueue<cv::Mat> &queue);
+
+void pollClients(SOCKET ListenSocket, std::vector<BlockingQueue<cv::Mat>> &queue);
