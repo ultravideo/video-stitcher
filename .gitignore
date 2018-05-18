@@ -323,3 +323,9 @@ ASALocalRun/
 *.JPG
 *.avi
 *.png
+
+*.pptx
+opencv_build/
+360_stitcher/external/
+360_stitcher/include/
+360_stitcher/lib/
