@@ -47,7 +47,8 @@ int skip_frames = 220;
 bool wrapAround = false;
 bool recalibrate = false;
 bool save_video = false;
-bool use_stream = false;
+bool use_stream = true;
+bool debug_stream = true;
 int const NUM_IMAGES = 5;
 int offsets[NUM_IMAGES] = {0, 37, 72, 72, 37}; // static
 //int offsets[NUM_IMAGES] = {0, 0, 0, 0, 0, 0}; // dynamic
@@ -646,6 +647,15 @@ int main(int argc, char* argv[])
     if (use_stream) {
         if (startPolling(que)) {
             return -1;
+        }
+    }
+    if (debug_stream) {
+        while (1) {
+            for (int i = 0; i < NUM_IMAGES; ++i) {
+                Mat mat = que[i].pop();
+                imshow(std::to_string(i), mat);
+                waitKey(17);
+            }
         }
     }
 
