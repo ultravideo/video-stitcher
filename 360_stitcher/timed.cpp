@@ -47,7 +47,7 @@ int skip_frames = 220;
 bool wrapAround = false;
 bool recalibrate = false;
 bool save_video = false;
-bool use_stream = true;
+bool use_stream = false;
 int const NUM_IMAGES = 5;
 int offsets[NUM_IMAGES] = {0, 37, 72, 72, 37}; // static
 //int offsets[NUM_IMAGES] = {0, 0, 0, 0, 0, 0}; // dynamic
@@ -643,9 +643,11 @@ bool getImages(vector<BlockingQueue<Mat>> &queues, vector<Mat> &images) {
 int main(int argc, char* argv[])
 {
 	vector<BlockingQueue<Mat>> que(NUM_IMAGES);
-	if (startPolling(que)) {
-		return -1;
-	}
+    if (use_stream) {
+        if (startPolling(que)) {
+            return -1;
+        }
+    }
 
 	LOGLN("");
 	//cuda::printCudaDeviceInfo(0);
