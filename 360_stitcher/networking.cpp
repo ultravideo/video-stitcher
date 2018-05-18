@@ -96,7 +96,7 @@ void pollFrames(SOCKET ConnectSocket, BlockingQueue<cv::Mat> &queue)
 	do {
 		iResult = recv(ConnectSocket, recvbuf, recvbuflen, 0);
 		if (iResult > 0) {
-			printf("Bytes received: %d\n", iResult);
+			//printf("Bytes received: %d\n", iResult);
 			copy_length = cv::min(iResult, max_idx - index);
 			memcpy(mat.data + index, recvbuf, copy_length);
 			index += iResult;
@@ -133,7 +133,7 @@ void pollClients(SOCKET ListenSocket, std::vector<BlockingQueue<cv::Mat>> &queue
 {
     int idx = 0;
     SOCKET ClientSocket;
-    printf("Listening2");
+    printf("Polling for clients.\n");
     while (1) {
         // Accept a client socket
         ClientSocket = accept(ListenSocket, NULL, NULL);
