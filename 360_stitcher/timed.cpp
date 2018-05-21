@@ -53,18 +53,16 @@ const bool enable_local = true;
 const bool save_video = false;
 const bool use_stream = false;
 const bool debug_stream = false;
+const bool use_surf = true;
 const int const NUM_IMAGES = 6;
 //int offsets[NUM_IMAGES] = {0, 37, 72, 72, 37}; // static
 int offsets[NUM_IMAGES] = { 0 }; // dynamic
-const int INIT_FRAME_AMT = 1;
-const int INIT_SKIPS = 0;
 const int RECALIB_DEL = 2;
 const double WORK_MEGAPIX = 0.6;	//0.6;	//-1			// Megapix parameter is scaled to the number
 const double SEAM_MEAGPIX = 0.01;							// of pixels in full image and this is used
 const double COMPOSE_MEGAPIX = 1.4;	//1.4;	//2.2;	//-1	// as a scaling factor when resizing images
 const float MATCH_CONF = 0.5f;
 const float CONF_THRESH = 0.95f;
-const int BLEND_TYPE = Blender::MULTI_BAND;					// Feather blending leaves ugly seams
 const float BLEND_STRENGTH = 5;
 const int HESS_THRESH = 300;
 const int NOCTAVES = 4;
@@ -86,69 +84,58 @@ vector<String> video_files = {base + "/0.mp4", base + "/1.mp4", base + "/2.mp4",
 const int TIMES = 5;
 std::chrono::high_resolution_clock::time_point times[TIMES];
 
-// Print function for parallel threads - debugging
-void msg(String const message, double const value, int const thread_id)
-{
-	cout_mutex.lock();
-	std::cout << thread_id << ": " << message << value << std::endl;
-	cout_mutex.unlock();
-}
-
 extern void custom_resize(cuda::GpuMat &in, cuda::GpuMat &out, Size t_size);
 
-void findFeatures(vector<vector<Mat>> &full_img, vector<ImageFeatures> &features,
+void findFeatures(vector<Mat> &full_img, vector<ImageFeatures> &features,
 				  double &work_scale, double &seam_scale, double &seam_work_aspect) {
-	//Ptr<cuda::ORB> d_orb = cuda::ORB::create(1500, 1.2, 8);
-    Ptr<SurfFeaturesFinderGpu> surf = makePtr<SurfFeaturesFinderGpu>();
+	Ptr<cuda::ORB> d_orb = cuda::ORB::create(1500, 1.2, 8);
+    Ptr<SurfFeaturesFinderGpu> surf = makePtr<SurfFeaturesFinderGpu>(HESS_THRESH, NOCTAVES, NOCTAVESLAYERS);
 	Mat image;
 	cuda::GpuMat gpu_img;
 	cuda::GpuMat descriptors;
 	// Read images from file and resize if necessary
 	for (int i = 0; i < NUM_IMAGES; i++) {
-		for (int j = 0; j < INIT_FRAME_AMT; ++j) {
-			// Negative value means processing images in the original size
-			if (WORK_MEGAPIX < 0)
-			{
-				image = full_img[j][i];
-				work_scale = 1;
-			}
-			// Else downscale images to speed up the process
-			else
-			{
-				work_scale = min(1.0, sqrt(WORK_MEGAPIX * 1e6 / full_img[j][i].size().area()));
-				cv::resize(full_img[j][i], image, Size(), work_scale, work_scale);
-			}
+        // Negative value means processing images in the original size
+        if (WORK_MEGAPIX < 0)
+        {
+            image = full_img[i];
+            work_scale = 1;
+        }
+        // Else downscale images to speed up the process
+        else
+        {
+            work_scale = min(1.0, sqrt(WORK_MEGAPIX * 1e6 / full_img[i].size().area()));
+            cv::resize(full_img[i], image, Size(), work_scale, work_scale);
+        }
 
-			// Calculate scale for downscaling done in seam finding process
-			seam_scale = min(1.0, sqrt(SEAM_MEAGPIX * 1e6 / full_img[j][i].size().area()));
-			seam_work_aspect = seam_scale / work_scale;
+        // Calculate scale for downscaling done in seam finding process
+        seam_scale = min(1.0, sqrt(SEAM_MEAGPIX * 1e6 / full_img[i].size().area()));
+        seam_work_aspect = seam_scale / work_scale;
 
-			//gpu_img.upload(image);
-			//cuda::cvtColor(gpu_img, gpu_img, CV_BGR2GRAY);
-			// Find features with SURF feature finder
+        if (use_surf) {
+            // Find features with SURF feature finder
             (*surf)(image, features[i]);
-			if (!j) {
-				//features[i].img_size = image.size();
-				//d_orb->detectAndCompute(gpu_img, noArray(), features[i].keypoints, descriptors);
-				//descriptors.download(features[i].descriptors);
-			} else {
-				//ImageFeatures ft;
-				//UMat cpu_descriptors;
-				//d_orb->detectAndCompute(gpu_img, noArray(), ft.keypoints, descriptors);
-				//descriptors.download(ft.descriptors);
-				//features[i].keypoints.insert(features[i].keypoints.end(), ft.keypoints.begin(), ft.keypoints.end());
-				//vconcat(features[i].descriptors, ft.descriptors, cpu_descriptors);
-				//features[i].descriptors = cpu_descriptors;
-			}
-			features[i].img_idx = i;
-		}
+        }
+        else
+        {
+            // Find features with ORB feature finder
+            gpu_img.upload(image);
+            cuda::cvtColor(gpu_img, gpu_img, CV_BGR2GRAY);
+            features[i].img_size = image.size();
+            d_orb->detectAndCompute(gpu_img, noArray(), features[i].keypoints, descriptors);
+            descriptors.download(features[i].descriptors);
+        }
+        features[i].img_idx = i;
 	}
 }
 
 void matchFeatures(vector<ImageFeatures> &features, vector<MatchesInfo> &pairwise_matches) {
-    Ptr<FeaturesMatcher> fm = makePtr<BestOf2NearestMatcher>(true);
-    (*fm)(features, pairwise_matches);
-    return;
+    // Use different way of matching features for SURF and ORB
+    if (use_surf) {
+        Ptr<FeaturesMatcher> fm = makePtr<BestOf2NearestMatcher>(true);
+        (*fm)(features, pairwise_matches);
+        return;
+    }
 	Ptr<DescriptorMatcher> dm = DescriptorMatcher::create("BruteForce-Hamming");
 
 	// Match features
@@ -304,7 +291,6 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
 	{
 		warped_image_scale = (focals[focals.size() / 2 - 1] + focals[focals.size() / 2]) * 0.5f;
 	}
-    //warped_image_scale = 503;
 
 	for (int i = 0; i < cameras.size(); ++i) {
 		cameras[i].focal = warped_image_scale;
@@ -432,16 +418,11 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 	{
 		blender = Blender::createDefault(Blender::NO, true);
 	}
-	else if (BLEND_TYPE == Blender::MULTI_BAND)
-	{
-		MultiBandBlender* mb = dynamic_cast<MultiBandBlender*>(blender.get());
-		mb->setNumBands(static_cast<int>(ceil(log(blend_width) / log(2.)) - 1.));
-	}
-	else if (BLEND_TYPE == Blender::FEATHER)
-	{
-		FeatherBlender* fb = dynamic_cast<FeatherBlender*>(blender.get());
-		fb->setSharpness(1.f / blend_width);
-	}
+    else
+    {
+        MultiBandBlender* mb = dynamic_cast<MultiBandBlender*>(blender.get());
+        mb->setNumBands(static_cast<int>(ceil(log(blend_width) / log(2.)) - 1.));
+    }
 
 	blender->prepare(corners, sizes);
 
@@ -823,7 +804,7 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, v
 
   // Takes in maps for 3D remapping, compose scale for sizing final panorama, blender and image size.
   // Returns true if all the phases of calibration are successful.
-bool stitch_calib(vector<vector<Mat>> full_img, vector<CameraParams> &cameras, vector<cuda::GpuMat> &x_maps, vector<cuda::GpuMat> &y_maps, vector<cuda::GpuMat> &x_mesh,
+bool stitch_calib(vector<Mat> full_img, vector<CameraParams> &cameras, vector<cuda::GpuMat> &x_maps, vector<cuda::GpuMat> &y_maps, vector<cuda::GpuMat> &x_mesh,
 	vector<cuda::GpuMat> &y_mesh, double &work_scale, double &seam_scale, double &seam_work_aspect, double &compose_scale, Ptr<Blender> &blender,
 	Ptr<ExposureCompensator> compensator, float &warped_image_scale, float &blend_width, Size &full_img_size)
 {
@@ -831,16 +812,14 @@ bool stitch_calib(vector<vector<Mat>> full_img, vector<CameraParams> &cameras, v
 	times[0] = std::chrono::high_resolution_clock::now();
 	vector<ImageFeatures> features(NUM_IMAGES);
 
-	for (int j = 0; j < full_img.size(); ++j) {
-		for (int i = 0; i < NUM_IMAGES; ++i) {
-			//CAPTURES[i].read(full_img[i]);
-			if (full_img[j][i].empty()) {
-				LOGLN("Can't read frame from camera/file nro " << i + j * NUM_IMAGES << "...");
-				return false;
-			}
-		}
-	}
-	full_img_size = full_img[0][0].size();
+    for (int i = 0; i < NUM_IMAGES; ++i) {
+        //CAPTURES[i].read(full_img[i]);
+        if (full_img[i].empty()) {
+            LOGLN("Can't read frame from camera/file nro " << i << "...");
+            return false;
+        }
+    }
+	full_img_size = full_img[0].size();
 
 	findFeatures(full_img, features, work_scale, seam_scale, seam_work_aspect);
 	times[1] = std::chrono::high_resolution_clock::now();
@@ -857,13 +836,13 @@ bool stitch_calib(vector<vector<Mat>> full_img, vector<CameraParams> &cameras, v
 
 	times[3] = std::chrono::high_resolution_clock::now();
 
-	warpImages(full_img[full_img.size()-1], full_img_size, cameras, blender, compensator,
+	warpImages(full_img, full_img_size, cameras, blender, compensator,
                work_scale, seam_scale, seam_work_aspect, x_maps, y_maps, compose_scale,
                warped_image_scale, blend_width);
 	times[3] = std::chrono::high_resolution_clock::now();
 
     if (enable_local) {
-        calibrateMeshWarp(full_img[full_img.size() - 1], features, pairwise_matches, x_mesh, y_mesh,
+        calibrateMeshWarp(full_img, features, pairwise_matches, x_mesh, y_mesh,
                           x_maps, y_maps, cameras[0].focal, compose_scale, work_scale);
     }
 	times[4] = std::chrono::high_resolution_clock::now();
@@ -1072,19 +1051,17 @@ int main(int argc, char* argv[])
 	vector<Point> corners(NUM_IMAGES);
 	vector<Size> sizes(NUM_IMAGES);
 	vector<CameraParams> cameras;
-	vector<vector<Mat>> full_img(INIT_FRAME_AMT);
-	for (int i = 0; i < INIT_FRAME_AMT; ++i) {
-        bool ret;
-        if (use_stream) {
-            ret = getImages(que, full_img[i]);
-        } else {
-            ret = getImages(CAPTURES, full_img[i], INIT_SKIPS);
-        }
-        if (!ret) {
-            LOGLN("Couldn't read images");
-            return -1;
-        }
-	}
+	vector<Mat> full_img;
+    bool ret;
+    if (use_stream) {
+        ret = getImages(que, full_img);
+    } else {
+        ret = getImages(CAPTURES, full_img);
+    }
+    if (!ret) {
+        LOGLN("Couldn't read images");
+        return -1;
+    }
 	//if (!stitch_calib(x_maps, y_maps, compose_scale, blender, blend_width, full_img_size, corners, sizes))
 	int64 start = getTickCount();
 	if (!stitch_calib(full_img, cameras, x_maps, y_maps, x_mesh, y_mesh, work_scale, seam_scale, seam_work_aspect, compose_scale, blender, compensator, warped_image_scale, blend_width, full_img_size))
@@ -1112,36 +1089,6 @@ int main(int argc, char* argv[])
 	MultiBandBlender* mb = dynamic_cast<MultiBandBlender*>(blender.get());
 	GainCompensator* gc = dynamic_cast<GainCompensator*>(compensator.get());
 
-	// Temporary way to acquire images ----------------------------------------
-	// Has to be adjusted manually
-	/*
-	// Doesn't exatly know if this is correct way to speed up uploading to gpu memory ---> 
-	cuda::HostMem full_img_0_pl(full_img_size, CV_8UC3);
-	cuda::HostMem full_img_1_pl(full_img_size, CV_8UC3);
-	cuda::HostMem full_img_2_pl(full_img_size, CV_8UC3);
-	cuda::HostMem full_img_3_pl(full_img_size, CV_8UC3);
-	cuda::HostMem full_img_4_pl(full_img_size, CV_8UC3);
-	cuda::HostMem full_img_5_pl(full_img_size, CV_8UC3);
-	// <---
-	Mat img_0 = full_img_0_pl.createMatHeader();
-	Mat img_1 = full_img_1_pl.createMatHeader();
-	Mat img_2 = full_img_2_pl.createMatHeader();
-	Mat img_3 = full_img_3_pl.createMatHeader();
-	Mat img_4 = full_img_4_pl.createMatHeader();
-	Mat img_5 = full_img_5_pl.createMatHeader();
-	img_0 = imread(FILES[0]);
-	input.push_back(img_0);
-	img_1 = imread(FILES[1]);
-	input.push_back(img_1);
-	img_2 = imread(FILES[2]);
-	input.push_back(img_2);
-	img_3 = imread(FILES[3]);
-	input.push_back(img_3);
-	img_4 = imread(FILES[4]);
-	input.push_back(img_4);
-	img_5 = imread(FILES[5]);
-	input.push_back(img_5);
-	*/
 	//-------------------------------------------------------------------------
 	BlockingQueue<cuda::GpuMat> results;
 	int64 starttime = getTickCount();
