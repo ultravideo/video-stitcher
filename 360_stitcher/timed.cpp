@@ -62,7 +62,6 @@ const double WORK_MEGAPIX = 0.6;	//0.6;	//-1			// Megapix parameter is scaled to
 const double SEAM_MEAGPIX = 0.01;							// of pixels in full image and this is used
 const double COMPOSE_MEGAPIX = 1.4;	//1.4;	//2.2;	//-1	// as a scaling factor when resizing images
 const float MATCH_CONF = 0.5f;
-const float CONF_THRESH = 0.95f;
 const float BLEND_STRENGTH = 5;
 const int HESS_THRESH = 300;
 const int NOCTAVES = 4;
@@ -132,7 +131,7 @@ void findFeatures(vector<Mat> &full_img, vector<ImageFeatures> &features,
 void matchFeatures(vector<ImageFeatures> &features, vector<MatchesInfo> &pairwise_matches) {
     // Use different way of matching features for SURF and ORB
     if (use_surf) {
-        Ptr<FeaturesMatcher> fm = makePtr<BestOf2NearestMatcher>(true);
+        Ptr<FeaturesMatcher> fm = makePtr<BestOf2NearestMatcher>(true, MATCH_CONF);
         (*fm)(features, pairwise_matches);
         return;
     }
@@ -225,7 +224,7 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
 		MatchesInfo &pw_matches = pairwise_matches[idx];
 		int i = pw_matches.src_img_idx;
 		int j = pw_matches.dst_img_idx;
-		if (i >= j || pw_matches.confidence < CONF_THRESH) {
+		if (abs(i - j - 1) > 0.1) {
 			++skips;
 			continue;
 		}
@@ -612,7 +611,6 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, v
     a = ALPHAS[0];
 	for (int idx = 0; idx < pairwise_matches.size(); ++idx) {
         MatchesInfo &pw_matches = pairwise_matches[idx];
-        if (pw_matches.confidence < CONF_THRESH) continue;
         if (!pw_matches.matches.size()) continue;
 		int src = pw_matches.src_img_idx;
 		int dst = pw_matches.dst_img_idx;
