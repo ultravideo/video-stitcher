@@ -21,12 +21,21 @@
     <ClCompile Include="networking.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="calibration.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="blockingqueue.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="networking.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="calibration.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="defs.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

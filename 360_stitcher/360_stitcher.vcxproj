@@ -129,11 +129,14 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="calibration.cpp" />
     <ClCompile Include="networking.cpp" />
     <ClCompile Include="timed.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="blockingqueue.h" />
+    <ClInclude Include="calibration.h" />
+    <ClInclude Include="defs.h" />
     <ClInclude Include="networking.h" />
   </ItemGroup>
   <ItemGroup>
