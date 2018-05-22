@@ -37,3 +37,9 @@
 - double COMPOSE_MEGAPIX: Size of images when stitching
 - float MATCH_CONF: Minimum confidence when matching SURF features
 - int HESS_THRESH, NOCTAVES, NOCTAVES_LAYERS: Parameters for SURF feature finding
+- int MAX_FEATURES_PER_IMAGE: Limit of features used per pair of images when optimizing CPW mesh
+- bool VISUALIZE_MATCHES: Visualize feature matches in image pairs. It is a bit broken for images wrapping around border.
+- bool VISUALIZE_WARPED: Visualize the CPW mesh
+- int N, M: Size of the used mesh by CPW
+- float ALPHAS[3]: Weights for different cost functions in CPW
+- int GLOBAL_DIST: Max distance of a feature in global cost function in CPW

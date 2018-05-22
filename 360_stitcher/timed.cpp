@@ -55,7 +55,7 @@ const bool save_video = false;
 const bool use_stream = false;
 const bool debug_stream = false;
 const bool use_surf = true;
-const int const NUM_IMAGES = 5;
+const int NUM_IMAGES = 5;
 int offsets[NUM_IMAGES] = {0, 37, 72, 72, 37}; // static
 //int offsets[NUM_IMAGES] = { 0 }; // dynamic
 const int RECALIB_DEL = 2;
@@ -68,7 +68,7 @@ const int HESS_THRESH = 300;
 const int NOCTAVES = 4;
 const int NOCTAVESLAYERS = 2;
 
-const int const MAX_FEATURES_PER_IMAGE = 100;
+const int MAX_FEATURES_PER_IMAGE = 100;
 const bool VISUALIZE_MATCHES = false; // Draw the meshes and matches to images pre mesh warp
 const bool VISUALIZE_WARPED = false; // Draw the warped mesh
 const int N = 2;
@@ -504,7 +504,10 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features, v
     }
 
     int features_per_image = MAX_FEATURES_PER_IMAGE;
-	int num_rows = 2 * images.size()*N*M + 2*images.size()*(N-1)*(M-1) + 2 * pairwise_matches.size() * features_per_image;
+    // 2 * images.size()*N*M for global alignment, 2*images.size()*(N-1)*(M-1) for smoothness term and
+    // 2 * (NUM_IMAGES +(int)wrapAround) * features_per_image for local alignment
+	int num_rows = 2 * images.size()*N*M + 2*images.size()*(N-1)*(M-1) +
+                   2 * (NUM_IMAGES + (int)wrapAround) * features_per_image;
 	Eigen::SparseMatrix<double> A(num_rows, 2*N*M*images.size());
 	Eigen::VectorXd b(num_rows), x;
 	b.fill(0);
