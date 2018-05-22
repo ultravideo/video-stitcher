@@ -45,8 +45,9 @@ using namespace cv::detail;
 
 std::mutex cout_mutex;
 
-std::string base = "still";
-const int skip_frames = 0;
+std::string base = "videos/";
+std::string folder = base + "static";
+const int skip_frames = 220;
 const bool wrapAround = true;
 const bool recalibrate = false;
 const bool enable_local = true;
@@ -54,9 +55,9 @@ const bool save_video = false;
 const bool use_stream = false;
 const bool debug_stream = false;
 const bool use_surf = true;
-const int const NUM_IMAGES = 6;
-//int offsets[NUM_IMAGES] = {0, 37, 72, 72, 37}; // static
-int offsets[NUM_IMAGES] = { 0 }; // dynamic
+const int const NUM_IMAGES = 5;
+int offsets[NUM_IMAGES] = {0, 37, 72, 72, 37}; // static
+//int offsets[NUM_IMAGES] = { 0 }; // dynamic
 const int RECALIB_DEL = 2;
 const double WORK_MEGAPIX = 0.6;	//0.6;	//-1			// Megapix parameter is scaled to the number
 const double SEAM_MEAGPIX = 0.01;							// of pixels in full image and this is used
@@ -79,7 +80,7 @@ const int GLOBAL_DIST = 5; // Maximum distance from vertex in global warping
 
 // Test material before right videos are obtained from the camera rig
 vector<VideoCapture> CAPTURES;
-vector<String> video_files = {base + "/0.mp4", base + "/1.mp4", base + "/2.mp4", base + "/3.mp4", base + "/4.mp4", base + "/5.mp4"};
+vector<String> video_files = {folder + "/0.mp4", folder + "/1.mp4", folder + "/2.mp4", folder + "/3.mp4", folder + "/4.mp4", folder + "/5.mp4"};
 const int TIMES = 5;
 std::chrono::high_resolution_clock::time_point times[TIMES];
 
