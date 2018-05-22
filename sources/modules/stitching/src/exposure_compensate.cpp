@@ -140,7 +140,6 @@ void GainCompensator::feed(const std::vector<Point> &corners, const std::vector<
     }
 
     solve(A, b, gains_);
-	std::cout << gains_ << std::endl;
 
     LOGLN("Exposure compensation, time: " << ((getTickCount() - t) / getTickFrequency()) << " sec");
 }
