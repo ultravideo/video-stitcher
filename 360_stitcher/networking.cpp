@@ -80,7 +80,7 @@ int startPolling(std::vector<BlockingQueue<cv::Mat>> &queues)
 
 #define IMG_WIDTH 1920
 #define IMG_HEIGHT 1080
-#define CHANNELS 1
+#define CHANNELS 2
 void pollFrames(SOCKET ConnectSocket, BlockingQueue<cv::Mat> &queue)
 {
 	int max_idx = IMG_HEIGHT * IMG_WIDTH * CHANNELS;
@@ -90,7 +90,7 @@ void pollFrames(SOCKET ConnectSocket, BlockingQueue<cv::Mat> &queue)
 	int copy_length;
 	int overflow;
 
-	cv::Mat mat(cv::Size(IMG_WIDTH, IMG_HEIGHT), CV_8UC1);
+	cv::Mat mat(cv::Size(IMG_WIDTH, IMG_HEIGHT), CV_MAKETYPE(CV_8U, CHANNELS));
 	int index = 0;
 	// Receive until the peer closes the connection
 	do {
@@ -111,10 +111,10 @@ void pollFrames(SOCKET ConnectSocket, BlockingQueue<cv::Mat> &queue)
 
 		if (index >= IMG_WIDTH * IMG_HEIGHT * CHANNELS) {
 			index = 0;
-			cv::cvtColor(mat, mat, CV_GRAY2BGR);
+			cv::cvtColor(mat, mat, CV_YUV2BGRA_YUY2);
 			queue.push(mat);
 
-			mat = cv::Mat(cv::Size(IMG_WIDTH, IMG_HEIGHT), CV_8UC1);
+			mat = cv::Mat(cv::Size(IMG_WIDTH, IMG_HEIGHT), CV_MAKETYPE(CV_8U, CHANNELS));
 			overflow = iResult - copy_length;
 			if (overflow) {
 				memcpy(mat.data, recvbuf + copy_length, overflow);
