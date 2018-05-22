@@ -22,7 +22,7 @@
 ### Flags
 - string base: Name of the folder where to search for input videos
 - int skip_frames: Amount frames to skip from start of all video streams
-- int offsets: Amount frames to skip from start of each video stream individually
+- int offsets: Amount frames to skip from start of each video stream individually. (Use calibrate.py to get required offsets)
 - bool wrapAround: If true input streams wrap around 360 degrees
 - bool recalibrate: If true recalibrate the stitch periodically (Currently not used)
 - bool enable_local: If true enable content preserving warping
