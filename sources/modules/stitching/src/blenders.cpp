@@ -751,7 +751,8 @@ void MultiBandBlender::feed_online(cuda::GpuMat &gpu_img, int img_num, cuda::Str
 
 void MultiBandBlender::blend(InputOutputArray dst, InputOutputArray dst_mask)
 {
-	blend(dst, dst_mask, cuda::GpuMat(), false);
+    cuda::GpuMat temp;
+	blend(dst, dst_mask, temp, false);
 }
 
 void MultiBandBlender::blend(InputOutputArray dst, InputOutputArray dst_mask, cuda::GpuMat &gpuOut, bool outputGpu)
