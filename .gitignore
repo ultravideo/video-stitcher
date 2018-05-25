@@ -214,7 +214,7 @@ ClientBin/
 *.publishsettings
 orleans.codegen.cs
 
-# Including strong name files can present a security risk 
+# Including strong name files can present a security risk
 # (https://github.com/github/gitignore/pull/2483#issue-259490424)
 #*.snk
 
@@ -311,7 +311,7 @@ __pycache__/
 # OpenCover UI analysis results
 OpenCover/
 
-# Azure Stream Analytics local run output 
+# Azure Stream Analytics local run output
 ASALocalRun/
 
 # MSBuild Binary and Structured Log
@@ -325,7 +325,8 @@ ASALocalRun/
 *.png
 
 *.pptx
-opencv_build/
 360_stitcher/external/
 360_stitcher/include/
 360_stitcher/lib/
+*build/
+*lib64/

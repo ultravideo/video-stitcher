@@ -7,7 +7,7 @@
 #include <limits>
 #include <iostream>
 #include <string>
-#include <Windows.h>
+//#include <Windows.h>
 
 #include "opencv2/opencv_modules.hpp"
 #include <opencv2/core/utility.hpp>
@@ -100,12 +100,12 @@ void stitch_online(double compose_scale, Mat &img, cuda::GpuMat &x_map, cuda::Gp
     {
         warped_images[img_num] = images[img_num];
     }
-	
+
 	//filter->apply(images[img_num], images[img_num], stream);
 	if (img_num == printing) {
 		times[3] = std::chrono::high_resolution_clock::now();
 	}
-	
+
 	// Calculate pyramids for blending
 	mb->feed_online(warped_images[img_num], img_num, stream);
 
@@ -228,13 +228,13 @@ int main(int argc, char* argv[])
         }
     }
 
-	// OFFLINE CALIBRATION 
+	// OFFLINE CALIBRATION
 	vector<cuda::GpuMat> x_maps(NUM_IMAGES);
 	vector<cuda::GpuMat> y_maps(NUM_IMAGES);
 	vector<cuda::GpuMat> x_mesh(NUM_IMAGES);
 	vector<cuda::GpuMat> y_mesh(NUM_IMAGES);
 	Size full_img_size;
-	
+
 	double work_scale = 1;
 	double seam_scale = 1;
 	double seam_work_aspect = 1;
@@ -273,7 +273,7 @@ int main(int argc, char* argv[])
 	LOGLN("");
 	LOGLN("Proceeding to online process...");
 	LOGLN("");
-	
+
 
 	MultiBandBlender* mb = dynamic_cast<MultiBandBlender*>(blender.get());
 	GainCompensator* gc = dynamic_cast<GainCompensator*>(compensator.get());
@@ -285,7 +285,7 @@ int main(int argc, char* argv[])
 	int frame_amt = 0;
 
 	// ONLINE STITCHING // ------------------------------------------------------------------------------------------------------
-	while(1) 
+	while(1)
 	{
 		vector<Mat> input;
 		bool capped;
