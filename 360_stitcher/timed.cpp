@@ -159,7 +159,9 @@ void consume(BlockingQueue<cuda::GpuMat> &results) {
 		}
 		resize(out, small_img, Size(1920, 1080));
 		small_img.convertTo(small_img, CV_8U);
-		//outVideo << small_img;
+        if (save_video) {
+            outVideo << small_img;
+        }
 		imshow("Video", small_img);
 		waitKey(1);
 		++i;
