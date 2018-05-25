@@ -6,17 +6,25 @@
 - Eigen
 - CUDA
 
-#### OpenCV
-- Make visual studio project with cmake to $(ProjectDir)../opencv_build
-- set WITH\_CUDA flag true and CUDA\_HOST\_COMPILER to the path where your visual c compiler is. (_VSINSTALLFOLDER_/VC/Tools/MSVC/_VERSIONNUMBER_/bin/Hostx64/x64/cl.exe)
-- In visual studio build the project "INSTALL"
-
 #### CUDA
 - Install CUDA https://docs.nvidia.com/cuda/cuda-installation-guide-microsoft-windows/index.html
 - copy the cuda lib and include folders to $(ProjectDir)
 
+#### OpenCV
+- Make visual studio project with cmake from $(ProjectDir)../sources to $(ProjectDir)../opencv_build
+- set WITH\_CUDA flag true and CUDA\_HOST\_COMPILER to the path where your visual c compiler is. (_VSINSTALLFOLDER_/VC/Tools/MSVC/_VERSIONNUMBER_/bin/Hostx64/x64/cl.exe)
+- In visual studio build the project "INSTALL"
+- On linux run following commands starting in base folder
+```
+mkdir opencv_build
+cd opencv_build
+cmake -DCMAKE_CXX_COMPILER=g++-7 -DCMAKE_C_COMPILER=gcc-7 -D CMAKE_BUILD_TYPE=RELEASE -D CMAKE_INSTALL_PREFIX=/usr/local -D WITH_CUDA=ON -D ENABLE_FAST_MATH=1 -D CUDA_FAST_MATH=1 -D WITH_CUBLAS=1 -D WITH_PNG=OFF ../sources/
+make -j8
+sudo make install
+```
+
 #### Eigen
-- Download Eigen to $(ProjectDir)include
+- Download Eigen and copy the Eigen folder to $(ProjectDir)include
 - http://eigen.tuxfamily.org/index.php?title=Main_Page
 
 ### Flags
