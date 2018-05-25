@@ -122,8 +122,8 @@ void GainCompensator::feed(const std::vector<Point> &corners, const std::vector<
         }
     }
 
-    double alpha = 0.1;
-    double beta = 10;
+    double alpha = 0.01;
+    double beta = 100;
 
     Mat_<double> A(num_images, num_images); A.setTo(0);
     Mat_<double> b(num_images, 1); b.setTo(0);
