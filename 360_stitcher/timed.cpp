@@ -119,17 +119,17 @@ void stitch_one(double compose_scale, vector<Mat> &imgs, vector<cuda::GpuMat> &x
 	for (int i = 0; i < NUM_IMAGES; ++i) {
 		stitch_online(compose_scale, std::ref(imgs[i]), std::ref(x_maps[i]), std::ref(y_maps[i]), std::ref(x_mesh[i]), std::ref(y_mesh[i]), mb, gc, i);
 	}
-	LOGLN("Frame:::::");
-	for (int i = 0; i < TIMES-1; ++i) {
-		LOGLN("delta time: " << std::chrono::duration_cast<std::chrono::milliseconds>(times[i+1] - times[i]).count());
-	}
+	//LOGLN("Frame:::::");
+	//for (int i = 0; i < TIMES-1; ++i) {
+	//	LOGLN("delta time: " << std::chrono::duration_cast<std::chrono::milliseconds>(times[i+1] - times[i]).count());
+	//}
 	Mat result;
 	Mat result_mask;
 	cuda::GpuMat out;
 	times[0] = std::chrono::high_resolution_clock::now();
 	mb->blend(result, result_mask, out, true);
 	times[1] = std::chrono::high_resolution_clock::now();
-	LOGLN("delta time: " << std::chrono::duration_cast<std::chrono::milliseconds>(times[1] - times[0]).count());
+	//LOGLN("delta time: " << std::chrono::duration_cast<std::chrono::milliseconds>(times[1] - times[0]).count());
 	results.push(out);
 }
 
@@ -159,8 +159,12 @@ void consume(BlockingQueue<cuda::GpuMat> &results) {
 		}
 		resize(out, small_img, Size(1920, 1080));
 		small_img.convertTo(small_img, CV_8U);
-		//outVideo << small_img;
-		imshow("Video", small_img);
+        if(save_video) {
+            outVideo << small_img;
+        }
+        if(show_out){
+            imshow("Video", small_img);
+        }
 		waitKey(1);
 		++i;
 	}
@@ -205,7 +209,10 @@ int main(int argc, char* argv[])
         while (1) {
             for (int i = 0; i < NUM_IMAGES; ++i) {
                 Mat mat = que[i].pop();
-                imshow(std::to_string(i), mat);
+                std::cout << "Frame" << std::endl;
+                if(show_out) {
+                    imshow(std::to_string(i), mat);
+                }
             }
             waitKey(1);
         }
