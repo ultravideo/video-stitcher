@@ -57,19 +57,8 @@ int startPolling(std::vector<BlockingQueue<cv::Mat>> &queues)
     }
 
     listen(sockfd, 5);
-    clilen = sizeof(cli_addr);
-    newsockfd = accept(sockfd, (struct sockaddr *) &cli_addr, &clilen);
-    if(newsockfd < 0) {
-        printf("ERROR on accept\n");
-        return 1;
-    }
-    bzero(buffer, sizeof(buffer));
-    n = read(newsockfd, buffer, 255);
-    if(n < 0) {
-        printf("ERROR reading from socker\n");
-        return 1;
-    }
-    printf("Here is the message: %s\n", buffer);
+    std::thread th(pollClients, sockfd, std::ref(cli_addr), std::ref(queues));
+    th.detach();
 #else
     WSADATA wsaData;
     int iResult;
@@ -157,6 +146,7 @@ void pollFrames(int ConnectSocket, BlockingQueue<cv::Mat> &queue)
 	int index = 0;
 	// Receive until the peer closes the connection
 	do {
+        bzero(recvbuf, sizeof(recvbuf));
         iResult = read(ConnectSocket, recvbuf, recvbuflen);
 		if (iResult > 0) {
 			//printf("Bytes received: %d\n", iResult);
@@ -191,6 +181,7 @@ void pollFrames(int ConnectSocket, BlockingQueue<cv::Mat> &queue)
 
 void pollClients(int ListenSocket, struct sockaddr_in &cli_addr, std::vector<BlockingQueue<cv::Mat>> &queues)
 {
+    std::cout << "Listening" << std::endl;
     int idx;
     int ConnectSocket;
     socklen_t clilen = sizeof(cli_addr);
@@ -199,6 +190,7 @@ void pollClients(int ListenSocket, struct sockaddr_in &cli_addr, std::vector<Blo
         if(ConnectSocket < 0) {
             printf("accept failed\n");
         } else {
+            printf("Client connected!");
             std::thread th(pollFrames, ConnectSocket, std::ref(queues[idx]));
             th.detach();
             ++idx;
