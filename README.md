@@ -35,6 +35,7 @@ sudo make install
 - bool recalibrate: If true recalibrate the CPW mesh periodically.
 - bool enable_local: If true enable content preserving warping
 - bool save_video: If true save the stitched video to a file
+- bool show_out: If true use imshow
 - bool use_stream: If true use network streams as input. If false use video streams
 - bool debug_stream: If true show the input from network streams directly
 - bool use_surf: If true use SURF to find features. If false use ORB instead. ORB is faster but SURF gives way better features
