@@ -226,7 +226,7 @@ void pollFrames(SOCKET ConnectSocket, BlockingQueue<cv::Mat> &queue)
 		iResult = recv(ConnectSocket, recvbuf, recvbuflen, 0);
 		if (iResult > 0) {
 			//printf("Bytes received: %d\n", iResult);
-			copy_length = cv::min(iResult, max_idx - index);
+			copy_length = min(iResult, max_idx - index);
 			memcpy(mat.data + index, recvbuf, copy_length);
 			index += iResult;
 		}
