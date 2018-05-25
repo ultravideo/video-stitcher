@@ -14,8 +14,8 @@
 #include "opencv2/cudafeatures2d.hpp"
 #include "opencv2/cudaarithm.hpp"
 
-#include <Eigen/IterativeLinearSolvers>
-#include <Eigen/SparseCholesky>
+#include "Eigen/IterativeLinearSolvers"
+#include "Eigen/SparseCholesky"
 
 using namespace cv;
 using namespace cv::detail;

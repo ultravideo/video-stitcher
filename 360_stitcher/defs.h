@@ -44,3 +44,6 @@ const std::vector<std::string> video_files = {folder + "/0.mp4", folder + "/1.mp
 
 #define PI 3.1415926535897932384626
 #define LOGLN(msg) std::cout << msg << std::endl
+
+// Comment this out when on windows
+#define LINUX
