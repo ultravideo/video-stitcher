@@ -5,7 +5,7 @@ import cv2
 import glob
 import sys
 
-folder = 'static'
+folder = 'videos/new'
 if len(sys.argv) > 1:
     folder = sys.argv[1]
 
