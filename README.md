@@ -27,6 +27,14 @@ sudo make install
 - Download Eigen and copy the Eigen folder to $(ProjectDir)include
 - http://eigen.tuxfamily.org/index.php?title=Main_Page
 
+## Building and running on Linux
+```
+cd 360_stitcher
+make
+cd build
+./stitcher
+```
+
 ### Flags
 - string base: Name of the folder where to search for input videos
 - int skip_frames: Amount frames to skip from start of all video streams
