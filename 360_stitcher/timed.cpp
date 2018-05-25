@@ -31,7 +31,7 @@
 #include <Eigen/IterativeLinearSolvers>
 #include <Eigen/SparseCholesky>
 
-#include "networking.h" // networking.h has to be included before Windows.h
+#include "networking.h" 
 #include "blockingqueue.h"
 #include "calibration.h"
 
