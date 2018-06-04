@@ -88,7 +88,7 @@
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
       <SDLCheck>true</SDLCheck>
-      <AdditionalIncludeDirectories>$(ProjectDir)\include;$(ProjectDir)../opencv_build/install/include;$(ProjectDir)\external</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)..\opencv_build\install\include;$(ProjectDir)external</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <AdditionalLibraryDirectories>$(ProjectDir)lib\x64;$(ProjectDir)../opencv_build/lib/Debug</AdditionalLibraryDirectories>
@@ -119,13 +119,13 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <AdditionalIncludeDirectories>$(ProjectDir)../opencv_build/install/include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)..\opencv_build\install\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <AdditionalLibraryDirectories>$(ProjectDir)../opencv_build/lib/Release;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>opencv_calib3d340.lib;opencv_core340.lib;opencv_cudaarithm340.lib;opencv_xfeatures2d340.lib;opencv_cudabgsegm340.lib;opencv_cudacodec340.lib;opencv_cudafeatures2d340.lib;opencv_cudafilters340.lib;opencv_cudaimgproc340.lib;opencv_cudalegacy340.lib;opencv_cudaoptflow340.lib;opencv_cudastereo340.lib;opencv_cudawarping340.lib;opencv_cudev340.lib;opencv_dnn340.lib;opencv_features2d340.lib;opencv_flann340.lib;opencv_highgui340.lib;opencv_imgcodecs340.lib;opencv_imgproc340.lib;opencv_ml340.lib;opencv_objdetect340.lib;opencv_photo340.lib;opencv_shape340.lib;opencv_stitching340.lib;opencv_superres340.lib;opencv_video340.lib;opencv_videoio340.lib;opencv_videostab340.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>opencv_calib3d340.lib;opencv_core340.lib;opencv_cudaarithm340.lib;opencv_xfeatures2d340.lib;opencv_cudabgsegm340.lib;opencv_cudacodec340.lib;opencv_cudafeatures2d340.lib;opencv_cudafilters340.lib;opencv_cudaimgproc340.lib;opencv_cudalegacy340.lib;opencv_cudaoptflow340.lib;opencv_cudastereo340.lib;opencv_cudawarping340.lib;opencv_cudev340.lib;opencv_dnn340.lib;opencv_features2d340.lib;opencv_flann340.lib;opencv_highgui340.lib;opencv_imgcodecs340.lib;opencv_imgproc340.lib;opencv_ml340.lib;opencv_objdetect340.lib;opencv_photo340.lib;opencv_shape340.lib;opencv_stitching340.lib;opencv_superres340.lib;opencv_video340.lib;opencv_videoio340.lib;opencv_videostab340.lib;cuda.lib;cudart.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>

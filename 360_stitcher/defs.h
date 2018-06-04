@@ -12,7 +12,7 @@ const bool wrapAround = true;
 const bool recalibrate = false;
 const bool enable_local = true;
 const bool save_video = false;
-const bool show_out = false;
+const bool show_out = true;
 const bool use_stream = true;
 const bool debug_stream = true;
 const bool use_surf = true;
@@ -47,4 +47,4 @@ const std::vector<std::string> video_files = {folder + "/0.mp4", folder + "/1.mp
 #define LOGLN(msg) std::cout << msg << std::endl
 
 // Comment this out when on windows
-#define LINUX
+//#define LINUX

@@ -129,8 +129,8 @@ int startPolling(std::vector<BlockingQueue<cv::Mat>> &queues)
 }
 
 #define IMG_WIDTH 1920
-#define IMG_HEIGHT 1080
-#define CHANNELS 2
+#define IMG_HEIGHT 1620
+#define CHANNELS 1
 
 #ifdef LINUX
 void pollFrames(int ConnectSocket, BlockingQueue<cv::Mat> &queue)
@@ -232,7 +232,7 @@ void pollFrames(SOCKET ConnectSocket, BlockingQueue<cv::Mat> &queue)
 
 		if (index >= IMG_WIDTH * IMG_HEIGHT * CHANNELS) {
 			index = 0;
-			cv::cvtColor(mat, mat, CV_YUV2BGRA_YUY2);
+			cv::cvtColor(mat, mat, CV_YUV2BGRA_NV12);
 			queue.push(mat);
 
 			mat = cv::Mat(cv::Size(IMG_WIDTH, IMG_HEIGHT), CV_MAKETYPE(CV_8U, CHANNELS));
