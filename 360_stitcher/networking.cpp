@@ -164,7 +164,7 @@ void pollFrames(int ConnectSocket, BlockingQueue<cv::Mat> &queue)
 
 		if (index >= IMG_WIDTH * IMG_HEIGHT * CHANNELS) {
 			index = 0;
-			cv::cvtColor(mat, mat, CV_YUV2BGRA_YUY2);
+			cv::cvtColor(mat, mat, CV_YUV2BGRA_NV12);
 			queue.push(mat);
 
 			mat = cv::Mat(cv::Size(IMG_WIDTH, IMG_HEIGHT), CV_MAKETYPE(CV_8U, CHANNELS));
