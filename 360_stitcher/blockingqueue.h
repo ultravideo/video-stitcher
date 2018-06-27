@@ -52,6 +52,12 @@ public:
 		mlock.unlock();
 		cond_.notify_one();
 	}
+
+	bool empty()
+	{
+		std::unique_lock<std::mutex> mlock(mutex_);
+		return queue_.empty();
+	}
 private:
 	std::queue<T> queue_;
 	std::mutex mutex_;

@@ -164,7 +164,7 @@ void pollFrames(int ConnectSocket, BlockingQueue<cv::Mat> &queue)
 
 		if (index >= IMG_WIDTH * IMG_HEIGHT * CHANNELS) {
 			index = 0;
-			cv::cvtColor(mat, mat, CV_YUV2BGRA_NV12);
+			cv::cvtColor(mat, mat, CV_YUV2BGR_NV12);
 			queue.push(mat);
 
 			mat = cv::Mat(cv::Size(IMG_WIDTH, IMG_HEIGHT), CV_MAKETYPE(CV_8U, CHANNELS));
@@ -232,7 +232,13 @@ void pollFrames(SOCKET ConnectSocket, BlockingQueue<cv::Mat> &queue)
 
 		if (index >= IMG_WIDTH * IMG_HEIGHT * CHANNELS) {
 			index = 0;
-			cv::cvtColor(mat, mat, CV_YUV2BGRA_NV12);
+			cv::cvtColor(mat, mat, CV_YUV2BGR_NV12);
+
+			if (clear_buffers) {
+				while (!queue.empty()) {
+					queue.pop();
+				}
+			}
 			queue.push(mat);
 
 			mat = cv::Mat(cv::Size(IMG_WIDTH, IMG_HEIGHT), CV_MAKETYPE(CV_8U, CHANNELS));
@@ -252,24 +258,31 @@ void pollFrames(SOCKET ConnectSocket, BlockingQueue<cv::Mat> &queue)
 
 void pollClients(SOCKET ListenSocket, std::vector<BlockingQueue<cv::Mat>> &queues)
 {
-    int idx = 0;
+    //int idx = 0;
     SOCKET ClientSocket;
+	struct sockaddr_in ClientAddr;
+	int AddrSize = sizeof(ClientAddr);
     printf("Polling for clients.\n");
     while (1) {
         // Accept a client socket
-        ClientSocket = accept(ListenSocket, NULL, NULL);
+        ClientSocket = accept(ListenSocket, (struct sockaddr*) &ClientAddr, &AddrSize);
+		//Get the last octet of client's ip address. This octet is used to define the queue index of the client, so the streams
+		//will always be in the same order
+		unsigned char lastOctet = ClientAddr.sin_addr.S_un.S_un_b.s_b4;
+
         if (ClientSocket == INVALID_SOCKET) {
             printf("accept failed with error: %d\n", WSAGetLastError());
         }
         else
         {
-            printf("Client connected!");
-            std::thread th(pollFrames, std::ref(ClientSocket), std::ref(queues[idx]));
+			LOGLN("Client connected!");
+
+            std::thread th(pollFrames, std::ref(ClientSocket), std::ref(queues[lastOctet - clientAddrStart]));
             th.detach();
-            ++idx;
+            /*++idx;
             if (idx == queues.size()) {
                 idx = 0;
-            }
+            }*/
         }
     }
 }

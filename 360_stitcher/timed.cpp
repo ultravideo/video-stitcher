@@ -129,6 +129,11 @@ void stitch_one(double compose_scale, vector<Mat> &imgs, vector<cuda::GpuMat> &x
 	mb->blend(result, result_mask, out, true);
 	times[1] = std::chrono::high_resolution_clock::now();
 	//LOGLN("delta time: " << std::chrono::duration_cast<std::chrono::milliseconds>(times[1] - times[0]).count());
+	if (clear_buffers) {
+		while (!results.empty()) {
+			results.pop();
+		}
+	}
 	results.push(out);
 }
 
@@ -189,6 +194,9 @@ bool getImages(vector<VideoCapture> caps, vector<Mat> &images, int skip=0) {
 }
 
 bool getImages(vector<BlockingQueue<Mat>> &queues, vector<Mat> &images) {
+	if (clear_buffers) {
+		images.clear();
+	}
 	for (int i = 0; i < NUM_IMAGES; ++i) {
 		images.push_back(queues[i].pop());
 	}
@@ -211,9 +219,10 @@ int main(int argc, char* argv[])
                 std::cout << "Frame" << std::endl;
                 if(show_out) {
                     imshow(std::to_string(i), mat);
+					waitKey(1);
                 }
             }
-            waitKey(1);
+            //waitKey(1);
         }
     }
 
