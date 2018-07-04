@@ -8,16 +8,16 @@
 const std::string base = "videos/";
 const std::string folder = base + "new";
 const int skip_frames = 220;
-const bool wrapAround = false;
+const bool wrapAround = true;
 const bool recalibrate = false;
 const bool enable_local = true;
 const bool save_video = false;
 const bool show_out = true;
 const bool use_stream = true;
-const bool clear_buffers = show_out;
+const bool clear_buffers = false;
 const bool debug_stream = false;
 const bool use_surf = true;
-const int NUM_IMAGES = 2;
+const int NUM_IMAGES = 6;
 const unsigned char clientAddrStart = 240; //The capture boards should have consecutive IP addresses, with the last octet starting from this number
 //const int offsets[NUM_IMAGES] = {0, 37, 72, 72, 37}; // static
 //const int offsets[NUM_IMAGES] = {43, 153, 151, 131, 95, 0}; // new
@@ -39,7 +39,7 @@ const int N = 2;
 const int M = 2;
 // Alphas are weights for different cost functions
 // 0: Local alignment, 1: Global alignment, 2: Smoothness
-const float ALPHAS[3] = {1, 0.11, 0.001};
+const float ALPHAS[3] = {1, 0.11f, 0.001f};
 const int GLOBAL_DIST = 5; // Maximum distance from vertex in global warping
 
 // Test material before right videos are obtained from the camera rig

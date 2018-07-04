@@ -14,9 +14,12 @@
 #include <opencv2/imgproc.hpp>
 #include <thread>
 
-#define DEFAULT_BUFLEN 1024
+#define DEFAULT_BUFLEN 4096
 #define DEFAULT_PORT "6666"
 #define DEFAULT_ADDRESS NULL
+#define IMG_WIDTH 1920
+#define IMG_HEIGHT 1620
+#define CHANNELS 1
 
 
 #ifndef LINUX
@@ -68,8 +71,8 @@ int startPolling(std::vector<BlockingQueue<cv::Mat>> &queues)
     struct addrinfo *result = NULL;
     struct addrinfo hints;
 
-    int iSendResult;
-    char recvbuf[DEFAULT_BUFLEN];
+    //int iSendResult;
+    //char recvbuf[DEFAULT_BUFLEN];
     int recvbuflen = DEFAULT_BUFLEN;
 
     // Initialize Winsock
@@ -128,9 +131,7 @@ int startPolling(std::vector<BlockingQueue<cv::Mat>> &queues)
 	return 0;
 }
 
-#define IMG_WIDTH 1920
-#define IMG_HEIGHT 1620
-#define CHANNELS 1
+
 
 #ifdef LINUX
 void pollFrames(int ConnectSocket, BlockingQueue<cv::Mat> &queue)
@@ -204,23 +205,23 @@ void pollClients(int ListenSocket, struct sockaddr_in &cli_addr, std::vector<Blo
 #else
 void pollFrames(SOCKET ConnectSocket, BlockingQueue<cv::Mat> &queue)
 {
-	int max_idx = IMG_HEIGHT * IMG_WIDTH * CHANNELS;
 	int iResult;
-	const int recvbuflen = DEFAULT_BUFLEN;
-	char recvbuf[recvbuflen];
-	int copy_length;
-	int overflow;
-
+	const unsigned int frame_total_bytes = IMG_WIDTH * IMG_HEIGHT * CHANNELS;
+	cv::Mat bgr_frame;
 	cv::Mat mat(cv::Size(IMG_WIDTH, IMG_HEIGHT), CV_MAKETYPE(CV_8U, CHANNELS));
-	int index = 0;
+	char* const data_ptr = (char*)mat.data;
 	// Receive until the peer closes the connection
 	do {
-		iResult = recv(ConnectSocket, recvbuf, recvbuflen, 0);
+		iResult = recv(ConnectSocket, data_ptr, frame_total_bytes, MSG_WAITALL);
 		if (iResult > 0) {
-			//printf("Bytes received: %d\n", iResult);
-			copy_length = min(iResult, max_idx - index);
-			memcpy(mat.data + index, recvbuf, copy_length);
-			index += iResult;
+			cv::cvtColor(mat, bgr_frame, CV_YUV2BGR_NV12);
+			if (clear_buffers) {
+				while (!queue.empty()) {
+					queue.pop();
+				}
+			}
+			queue.push(bgr_frame);
+			
 		}
 		else if (iResult == 0) {
 			printf("Connection closed\n");
@@ -228,25 +229,6 @@ void pollFrames(SOCKET ConnectSocket, BlockingQueue<cv::Mat> &queue)
 		}
 		else {
 			printf("recv failed with error: %d\n", WSAGetLastError());
-		}
-
-		if (index >= IMG_WIDTH * IMG_HEIGHT * CHANNELS) {
-			index = 0;
-			cv::cvtColor(mat, mat, CV_YUV2BGR_NV12);
-
-			if (clear_buffers) {
-				while (!queue.empty()) {
-					queue.pop();
-				}
-			}
-			queue.push(mat);
-
-			mat = cv::Mat(cv::Size(IMG_WIDTH, IMG_HEIGHT), CV_MAKETYPE(CV_8U, CHANNELS));
-			overflow = iResult - copy_length;
-			if (overflow) {
-				memcpy(mat.data, recvbuf + copy_length, overflow);
-				index = overflow;
-			}
 		}
 	} while (1);
 
@@ -263,6 +245,7 @@ void pollClients(SOCKET ListenSocket, std::vector<BlockingQueue<cv::Mat>> &queue
 	struct sockaddr_in ClientAddr;
 	int AddrSize = sizeof(ClientAddr);
     printf("Polling for clients.\n");
+	int ConnectedClients = 0;
     while (1) {
         // Accept a client socket
         ClientSocket = accept(ListenSocket, (struct sockaddr*) &ClientAddr, &AddrSize);
@@ -279,6 +262,10 @@ void pollClients(SOCKET ListenSocket, std::vector<BlockingQueue<cv::Mat>> &queue
 
             std::thread th(pollFrames, std::ref(ClientSocket), std::ref(queues[lastOctet - clientAddrStart]));
             th.detach();
+			ConnectedClients++;
+			if (ConnectedClients == NUM_IMAGES) {
+				break;
+			}
             /*++idx;
             if (idx == queues.size()) {
                 idx = 0;

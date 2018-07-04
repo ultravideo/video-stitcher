@@ -139,8 +139,10 @@ void stitch_one(double compose_scale, vector<Mat> &imgs, vector<cuda::GpuMat> &x
 
 void consume(BlockingQueue<cuda::GpuMat> &results) {
 	cuda::GpuMat mat;
-	int i = 0;
+	bool calib_img_written = false;
 	VideoWriter outVideo;
+	Mat out;
+	Mat small_img;
 	if (save_video) {
 		outVideo.open("stitched.avi", VideoWriter::fourcc('M', 'J', 'P', 'G'), 30, Size(1920, 1080));
 		if (!outVideo.isOpened()) {
@@ -148,8 +150,6 @@ void consume(BlockingQueue<cuda::GpuMat> &results) {
 		}
 	}
 	while (1) {
-		Mat out;
-		Mat small_img;
 		mat = results.pop();
 		if (mat.empty()) {
 			if (save_video) {
@@ -158,19 +158,19 @@ void consume(BlockingQueue<cuda::GpuMat> &results) {
 			return;
 		}
 		mat.download(out);
-		if (!i) {
+		if (!calib_img_written) {
 			imwrite("calib.jpg", out);
+			calib_img_written = true;
 		}
-		resize(out, small_img, Size(1920, 1080));
+		resize(out, small_img, Size(1680, 1050), 0, 0, INTER_AREA);
 		small_img.convertTo(small_img, CV_8U);
         if(save_video) {
             outVideo << small_img;
         }
         if(show_out){
             imshow("Video", small_img);
-        }
-		waitKey(1);
-		++i;
+			waitKey(1);
+        }	
 	}
 }
 
@@ -215,12 +215,17 @@ int main(int argc, char* argv[])
     if (debug_stream) {
         while (1) {
             for (int i = 0; i < NUM_IMAGES; ++i) {
-                Mat mat = que[i].pop();
-                std::cout << "Frame" << std::endl;
-                if(show_out) {
-                    imshow(std::to_string(i), mat);
-					waitKey(1);
-                }
+				if (!que[i].empty()) {
+					//Mat mat = que[i].pop();
+					//std::cout << "Frame" << std::endl;
+					if (show_out) {
+						imshow(std::to_string(i), que[i].pop());
+						waitKey(1);
+					}
+					else {
+						que[i].pop();
+					}
+				}
             }
             //waitKey(1);
         }

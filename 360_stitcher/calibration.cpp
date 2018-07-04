@@ -24,7 +24,7 @@ using std::vector;
 
 void findFeatures(vector<Mat> &full_img, vector<ImageFeatures> &features,
                   double &work_scale, double &seam_scale, double &seam_work_aspect) {
-    Ptr<cuda::ORB> d_orb = cuda::ORB::create(1500, 1.2, 8);
+    Ptr<cuda::ORB> d_orb = cuda::ORB::create(1500, 1.2f, 8);
     Ptr<SurfFeaturesFinderGpu> surf = makePtr<SurfFeaturesFinderGpu>(HESS_THRESH, NOCTAVES, NOCTAVESLAYERS);
     Mat image;
     cuda::GpuMat gpu_img;
