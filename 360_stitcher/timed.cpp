@@ -149,6 +149,9 @@ void consume(BlockingQueue<cuda::GpuMat> &results) {
 			return;
 		}
 	}
+	/*int frame_counter = 0;
+	std::chrono::high_resolution_clock::time_point tp = std::chrono::high_resolution_clock::now();
+	std::chrono::high_resolution_clock::time_point tp2;*/
 	while (1) {
 		mat = results.pop();
 		if (mat.empty()) {
@@ -162,7 +165,7 @@ void consume(BlockingQueue<cuda::GpuMat> &results) {
 			imwrite("calib.jpg", out);
 			calib_img_written = true;
 		}
-		resize(out, small_img, Size(1680, 1050), 0, 0, INTER_AREA);
+		resize(out, small_img, Size(OUTPUT_WIDTH, OUTPUT_HEIGHT), 0, 0, INTER_AREA);
 		small_img.convertTo(small_img, CV_8U);
         if(save_video) {
             outVideo << small_img;
@@ -171,6 +174,13 @@ void consume(BlockingQueue<cuda::GpuMat> &results) {
             imshow("Video", small_img);
 			waitKey(1);
         }	
+		/*++frame_counter;
+		if (frame_counter == 10) {
+			tp2 = std::chrono::high_resolution_clock::now();
+			LOGLN("delta time 10 frames: " << std::chrono::duration_cast<std::chrono::milliseconds>(tp2 - tp).count() << " ms");
+			tp = tp2;
+			frame_counter = 0;
+		}*/
 	}
 }
 

@@ -566,8 +566,11 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features,
         }
 
         for (int i = 0; i < min(features_per_image, (int)(pw_matches.matches.size() * 0.8f)); ++i) {
-            while (1) {
-                int idx = rand() % pw_matches.matches.size();
+            //while (1) {
+			//while (pw_matches.num_inliers != 0) {
+			for (int j = 0; j < pw_matches.inliers_mask.size(); j++) {
+                //int idx = rand() % pw_matches.matches.size();
+				int idx = j;
                 // Only use inlier matches
                 if (!pw_matches.inliers_mask[idx]) continue;
 

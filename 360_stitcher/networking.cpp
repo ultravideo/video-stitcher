@@ -212,6 +212,7 @@ void pollFrames(SOCKET ConnectSocket, BlockingQueue<cv::Mat> &queue)
 	char* const data_ptr = (char*)mat.data;
 	// Receive until the peer closes the connection
 	do {
+		//Using MSG_WAITALL causes recv to block until we have received the full frame
 		iResult = recv(ConnectSocket, data_ptr, frame_total_bytes, MSG_WAITALL);
 		if (iResult > 0) {
 			cv::cvtColor(mat, bgr_frame, CV_YUV2BGR_NV12);
@@ -266,10 +267,6 @@ void pollClients(SOCKET ListenSocket, std::vector<BlockingQueue<cv::Mat>> &queue
 			if (ConnectedClients == NUM_IMAGES) {
 				break;
 			}
-            /*++idx;
-            if (idx == queues.size()) {
-                idx = 0;
-            }*/
         }
     }
 }
