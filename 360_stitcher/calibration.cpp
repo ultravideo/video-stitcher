@@ -1,4 +1,5 @@
 #include "calibration.h"
+#include <algorithm>
 
 #include "opencv2/imgproc.hpp"
 #include "opencv2/highgui.hpp"
@@ -554,9 +555,11 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features,
     // Local alignment term from http://web.cecs.pdx.edu/~fliu/papers/cvpr2014-stitching.pdf
     float f = focal_length;
     a = ALPHAS[0];
+	vector<int> valid_indexes_orig;
+	vector<int> valid_indexes;
     for (int idx = 0; idx < pairwise_matches.size(); ++idx) {
         MatchesInfo &pw_matches = pairwise_matches[idx];
-        if (!pw_matches.matches.size()) continue;
+        if (!pw_matches.matches.size() || !pw_matches.num_inliers) continue;
         int src = pw_matches.src_img_idx;
         int dst = pw_matches.dst_img_idx;
         // Only calculate loss from pairs of src and dst where src = dst - 1
@@ -565,12 +568,23 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features,
             continue;
         }
 
+		valid_indexes_orig.clear();
+		//Find all indexes of the inliers_mask that contain the value 1
+		for (int i = 0; i < pw_matches.inliers_mask.size(); i++) {
+			if (pw_matches.inliers_mask[i]) {
+				valid_indexes_orig.push_back(i);
+			}
+		}
+		if (valid_indexes_orig.size() == 0) continue;
+
         for (int i = 0; i < min(features_per_image, (int)(pw_matches.matches.size() * 0.8f)); ++i) {
-            //while (1) {
-			//while (pw_matches.num_inliers != 0) {
-			for (int j = 0; j < pw_matches.inliers_mask.size(); j++) {
-                //int idx = rand() % pw_matches.matches.size();
-				int idx = j;
+			//Shuffle the index vector on each loop to get random results each time
+			valid_indexes = valid_indexes_orig;
+			std::random_shuffle(valid_indexes.begin(), valid_indexes.end());
+			while (1) {
+				if (valid_indexes.size() == 0) break;
+				int idx = valid_indexes.back();
+				valid_indexes.pop_back();
                 // Only use inlier matches
                 if (!pw_matches.inliers_mask[idx]) continue;
 
