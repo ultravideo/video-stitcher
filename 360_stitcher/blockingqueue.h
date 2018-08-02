@@ -58,6 +58,12 @@ public:
 		std::unique_lock<std::mutex> mlock(mutex_);
 		return queue_.empty();
 	}
+
+	size_t size()
+	{
+		std::unique_lock<std::mutex> mlock(mutex_);
+		return queue_.size();
+	}
 private:
 	std::queue<T> queue_;
 	std::mutex mutex_;
