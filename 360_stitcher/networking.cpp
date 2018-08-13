@@ -14,7 +14,6 @@
 #include <opencv2/imgproc.hpp>
 #include <thread>
 
-#define DEFAULT_BUFLEN 4096
 #define DEFAULT_PORT "6666"
 #define DEFAULT_ADDRESS NULL
 #define IMG_WIDTH 1920
@@ -70,10 +69,6 @@ int startPolling(std::vector<BlockingQueue<cv::Mat>> &queues)
 
     struct addrinfo *result = NULL;
     struct addrinfo hints;
-
-    //int iSendResult;
-    //char recvbuf[DEFAULT_BUFLEN];
-    int recvbuflen = DEFAULT_BUFLEN;
 
     // Initialize Winsock
     iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
@@ -206,7 +201,7 @@ void pollClients(int ListenSocket, struct sockaddr_in &cli_addr, std::vector<Blo
 void pollFrames(SOCKET ConnectSocket, BlockingQueue<cv::Mat> &queue)
 {
 	int iResult;
-	const unsigned int frame_total_bytes = IMG_WIDTH * IMG_HEIGHT * CHANNELS;
+	const int frame_total_bytes = IMG_WIDTH * IMG_HEIGHT * CHANNELS;
 	cv::Mat bgr_frame;
 	cv::Mat mat(cv::Size(IMG_WIDTH, IMG_HEIGHT), CV_MAKETYPE(CV_8U, CHANNELS));
 	char* const data_ptr = (char*)mat.data;
@@ -241,7 +236,6 @@ void pollFrames(SOCKET ConnectSocket, BlockingQueue<cv::Mat> &queue)
 
 void pollClients(SOCKET ListenSocket, std::vector<BlockingQueue<cv::Mat>> &queues)
 {
-    //int idx = 0;
     SOCKET ClientSocket;
 	struct sockaddr_in ClientAddr;
 	int AddrSize = sizeof(ClientAddr);

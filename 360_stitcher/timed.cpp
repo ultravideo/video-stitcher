@@ -6,6 +6,9 @@
 #include <limits>
 #include <iostream>
 #include <string>
+#include <WinSock2.h>
+#include <Windows.h>
+#include <WS2tcpip.h>
 
 #include "opencv2/opencv_modules.hpp"
 #include <opencv2/core/utility.hpp>
@@ -51,8 +54,8 @@ Ptr<cuda::Filter> filter = cuda::createGaussianFilter(CV_8UC3, CV_8UC3, Size(5, 
 int printing = 0;
 // Online stitching fuction, which resizes if necessary, remaps to 3D and uses the stripped version of feed function
 void stitch_online(double compose_scale, Mat &img, cuda::GpuMat &x_map, cuda::GpuMat &y_map,
-                   cuda::GpuMat &x_mesh, cuda::GpuMat &y_mesh, MultiBandBlender* mb,
-                   GainCompensator* gc, int thread_num)
+	cuda::GpuMat &x_mesh, cuda::GpuMat &y_mesh, MultiBandBlender* mb,
+	GainCompensator* gc, int thread_num)
 {
 	int img_num = thread_num % NUM_IMAGES;
 	if (img_num == printing) {
@@ -79,26 +82,26 @@ void stitch_online(double compose_scale, Mat &img, cuda::GpuMat &x_map, cuda::Gp
 
 		// Warp using existing maps
 		cuda::remap(images[img_num], images[img_num], x_map, y_map, INTER_LINEAR,
-                    BORDER_CONSTANT, Scalar(0), stream);
+			BORDER_CONSTANT, Scalar(0), stream);
 	}
 	else
 	{
 		// Warp using existing maps
 		cuda::remap(full_imgs[img_num], images[img_num], x_map, y_map, INTER_LINEAR,
-                    BORDER_CONSTANT, Scalar(0), stream);
+			BORDER_CONSTANT, Scalar(0), stream);
 	}
-    // Apply gain compensation
+	// Apply gain compensation
 	images[img_num].convertTo(images[img_num], images[img_num].type(), gc->gains()[img_num]);
 
-    if (enable_local) {
-        // Warp the image and the mask according to a mesh
-        cuda::remap(images[img_num], warped_images[img_num], x_mesh, y_mesh,
-                    INTER_LINEAR, BORDER_CONSTANT, Scalar(0), stream);
-    }
-    else
-    {
-        warped_images[img_num] = images[img_num];
-    }
+	if (enable_local) {
+		// Warp the image and the mask according to a mesh
+		cuda::remap(images[img_num], warped_images[img_num], x_mesh, y_mesh,
+			INTER_LINEAR, BORDER_CONSTANT, Scalar(0), stream);
+	}
+	else
+	{
+		warped_images[img_num] = images[img_num];
+	}
 
 	//filter->apply(images[img_num], images[img_num], stream);
 	if (img_num == printing) {
@@ -114,7 +117,7 @@ void stitch_online(double compose_scale, Mat &img, cuda::GpuMat &x_map, cuda::Gp
 }
 
 void stitch_one(double compose_scale, vector<Mat> &imgs, vector<cuda::GpuMat> &x_maps, vector<cuda::GpuMat> &y_maps, vector<cuda::GpuMat> &x_mesh, vector<cuda::GpuMat> &y_mesh,
-				MultiBandBlender* mb, GainCompensator* gc, BlockingQueue<cuda::GpuMat> &results) {
+	MultiBandBlender* mb, GainCompensator* gc, BlockingQueue<cuda::GpuMat> &results) {
 	for (int i = 0; i < NUM_IMAGES; ++i) {
 		stitch_online(compose_scale, std::ref(imgs[i]), std::ref(x_maps[i]), std::ref(y_maps[i]), std::ref(x_mesh[i]), std::ref(y_mesh[i]), mb, gc, i);
 	}
@@ -134,24 +137,87 @@ void stitch_one(double compose_scale, vector<Mat> &imgs, vector<cuda::GpuMat> &x
 			results.pop();
 		}
 	}
-	results.push(out);
+	// Don't push to results if there are enough frames already. This is to prevent memory overflow, if the frames are not consumed fast enough.
+	if (results.size() < RESULTS_MAX_SIZE) {
+		results.push(out);
+	}
 }
 
 void consume(BlockingQueue<cuda::GpuMat> &results) {
 	cuda::GpuMat mat;
-	bool calib_img_written = false;
+	bool first_frame = true;
 	VideoWriter outVideo;
-	Mat out;
-	Mat small_img;
+	Mat original;
+	Mat original_8u;
+	Mat resized_bgr;
+	Mat resized_rgb;
+	Mat final_result = Mat(Size(OUTPUT_WIDTH, OUTPUT_HEIGHT), CV_8UC3, cv::Scalar(0));
 	if (save_video) {
 		outVideo.open("stitched.avi", VideoWriter::fourcc('M', 'J', 'P', 'G'), 30, Size(1920, 1080));
 		if (!outVideo.isOpened()) {
 			return;
 		}
 	}
-	/*int frame_counter = 0;
+	int frame_counter = 0;
+
+
+	int iSendResult;
+	SOCKET ConnectSocket = INVALID_SOCKET;
+
+	if (send_results) {
+		struct addrinfo *result = NULL;
+		struct addrinfo hints;
+		WSADATA wsaData;
+		int iResult;
+
+
+		// Initialize Winsock
+		iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
+		if (iResult != 0) {
+			printf("WSAStartup failed with error: %d\n", iResult);
+			return;
+		}
+
+		ZeroMemory(&hints, sizeof(hints));
+		hints.ai_family = AF_INET;
+		hints.ai_socktype = SOCK_STREAM;
+		hints.ai_protocol = IPPROTO_TCP;
+		//hints.ai_flags = AI_PASSIVE;
+
+		// Resolve the server address and port
+		iResult = getaddrinfo("localhost", UNITY_TCP_PORT, &hints, &result);
+		if (iResult != 0) {
+			printf("getaddrinfo failed with error: %d\n", iResult);
+			WSACleanup();
+			return;
+		}
+
+		// Create a SOCKET for connecting to server
+		ConnectSocket = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
+		if (ConnectSocket == INVALID_SOCKET) {
+			printf("socket failed with error: %ld\n", WSAGetLastError());
+			freeaddrinfo(result);
+			WSACleanup();
+			return;
+		}
+
+		// Setup the TCP listening socket
+		iResult = connect(ConnectSocket, result->ai_addr, (int)result->ai_addrlen);
+		if (iResult == SOCKET_ERROR) {
+			printf("connect failed with error: %d\n", WSAGetLastError());
+			freeaddrinfo(result);
+			closesocket(ConnectSocket);
+			WSACleanup();
+			return;
+		}
+
+		freeaddrinfo(result);
+		LOGLN("Connected to Unity");
+	}
+	Size resize_dst_size;
+	uchar* row_ptr = final_result.ptr(0);
 	std::chrono::high_resolution_clock::time_point tp = std::chrono::high_resolution_clock::now();
-	std::chrono::high_resolution_clock::time_point tp2;*/
+	std::chrono::high_resolution_clock::time_point tp2;
 	while (1) {
 		mat = results.pop();
 		if (mat.empty()) {
@@ -160,31 +226,60 @@ void consume(BlockingQueue<cuda::GpuMat> &results) {
 			}
 			return;
 		}
-		mat.download(out);
-		if (!calib_img_written) {
-			imwrite("calib.jpg", out);
-			calib_img_written = true;
+		mat.download(original);
+		if (first_frame) {
+			imwrite("calib.jpg", original);
+			if (keep_aspect_ratio) {
+				//Assume that we are resizing a wide image so that we need to add black bars above and below the image.
+				//Resize the width to exactly the correct size, and use the ratio between output and input widths to resize the height.
+				//Cols = width (number of columns) and rows = height (number of rows)
+				resize_dst_size = Size(OUTPUT_WIDTH, ((double)OUTPUT_WIDTH / (double)original.cols) * original.rows + 0.5);
+
+			}
+			else {
+				resize_dst_size = Size(OUTPUT_WIDTH, OUTPUT_HEIGHT);
+			}
 		}
-		resize(out, small_img, Size(OUTPUT_WIDTH, OUTPUT_HEIGHT), 0, 0, INTER_AREA);
-		small_img.convertTo(small_img, CV_8U);
-        if(save_video) {
-            outVideo << small_img;
-        }
-        if(show_out){
-            imshow("Video", small_img);
+		original.convertTo(original_8u, CV_8U);
+		if (keep_aspect_ratio) {
+			//To keep the aspect ratio, first resize the original image and then copy it to the middle of a black image.
+			resize(original_8u, resized_bgr, resize_dst_size, 0, 0, INTER_LINEAR);
+			cvtColor(resized_bgr, resized_rgb, COLOR_BGR2RGB);
+			if (first_frame) {
+				row_ptr = final_result.ptr(final_result.rows / 2 - resized_rgb.rows / 2);
+			}
+			memcpy(row_ptr, resized_rgb.data, resized_rgb.u->size);
+		}
+		else {
+			resize(original_8u, final_result, resize_dst_size, 0, 0, INTER_LINEAR);
+		}
+
+		if (send_results) {
+			iSendResult = send(ConnectSocket, (char*)final_result.data, (int)final_result.u->size, NULL);
+		}
+		if (save_video) {
+			outVideo << resized_rgb;
+		}
+		if (first_frame) {
+			imwrite("calib_resized.jpg", resized_rgb);
+			imwrite("texout.jpg", final_result);
+			first_frame = false;
+		}
+		if (show_out) {
+			imshow("Video", final_result);
 			waitKey(1);
-        }	
-		/*++frame_counter;
-		if (frame_counter == 10) {
+		}
+		++frame_counter;
+		if (frame_counter == 30) {
 			tp2 = std::chrono::high_resolution_clock::now();
-			LOGLN("delta time 10 frames: " << std::chrono::duration_cast<std::chrono::milliseconds>(tp2 - tp).count() << " ms");
-			tp = tp2;
+			LOGLN("delta time 30 frames: " << std::chrono::duration_cast<std::chrono::milliseconds>(tp2 - tp).count() << " ms");
 			frame_counter = 0;
-		}*/
+			tp = std::chrono::high_resolution_clock::now();
+		}
 	}
 }
 
-bool getImages(vector<VideoCapture> caps, vector<Mat> &images, int skip=0) {
+bool getImages(vector<VideoCapture> caps, vector<Mat> &images, int skip = 0) {
 	for (int i = 0; i < NUM_IMAGES; ++i) {
 		Mat mat;
 		bool capped;
@@ -216,15 +311,15 @@ bool getImages(vector<BlockingQueue<Mat>> &queues, vector<Mat> &images) {
 int main(int argc, char* argv[])
 {
 	vector<BlockingQueue<Mat>> que(NUM_IMAGES);
-    std::vector<VideoCapture> CAPTURES;
-    if (use_stream) {
-        if (startPolling(que)) {
-            return -1;
-        }
-    }
-    if (debug_stream) {
-        while (1) {
-            for (int i = 0; i < NUM_IMAGES; ++i) {
+	std::vector<VideoCapture> CAPTURES;
+	if (use_stream) {
+		if (startPolling(que)) {
+			return -1;
+		}
+	}
+	if (debug_stream) {
+		while (1) {
+			for (int i = 0; i < NUM_IMAGES; ++i) {
 				if (!que[i].empty()) {
 					//Mat mat = que[i].pop();
 					//std::cout << "Frame" << std::endl;
@@ -236,10 +331,10 @@ int main(int argc, char* argv[])
 						que[i].pop();
 					}
 				}
-            }
-            //waitKey(1);
-        }
-    }
+			}
+			//waitKey(1);
+		}
+	}
 
 	LOGLN("");
 	//cuda::printCudaDeviceInfo(0);
@@ -247,16 +342,16 @@ int main(int argc, char* argv[])
 	cuda::setDevice(0);
 
 	// Videofeed input
-    if (!use_stream) {
-        for (int i = 0; i < NUM_IMAGES; ++i) {
-            CAPTURES.push_back(VideoCapture(video_files[i]));
-            if (!CAPTURES[i].isOpened()) {
-                LOGLN("ERROR: Unable to open videofile(s).");
-                return -1;
-            }
-            CAPTURES[i].set(CV_CAP_PROP_POS_FRAMES, skip_frames + offsets[i]);
-        }
-    }
+	if (!use_stream) {
+		for (int i = 0; i < NUM_IMAGES; ++i) {
+			CAPTURES.push_back(VideoCapture(video_files[i]));
+			if (!CAPTURES[i].isOpened()) {
+				LOGLN("ERROR: Unable to open videofile(s).");
+				return -1;
+			}
+			CAPTURES[i].set(CV_CAP_PROP_POS_FRAMES, skip_frames + offsets[i]);
+		}
+	}
 
 	// OFFLINE CALIBRATION
 	vector<cuda::GpuMat> x_maps(NUM_IMAGES);
@@ -279,21 +374,22 @@ int main(int argc, char* argv[])
 	vector<CameraParams> cameras;
 	vector<Mat> full_img;
 
-    bool ret;
-    if (use_stream) {
-        ret = getImages(que, full_img);
-    } else {
-        ret = getImages(CAPTURES, full_img);
-    }
-    if (!ret) {
-        LOGLN("Couldn't read images");
-        return -1;
-    }
+	bool ret;
+	if (use_stream) {
+		ret = getImages(que, full_img);
+	}
+	else {
+		ret = getImages(CAPTURES, full_img);
+	}
+	if (!ret) {
+		LOGLN("Couldn't read images");
+		return -1;
+	}
 
 	int64 start = getTickCount();
 	if (!stitch_calib(full_img, cameras, x_maps, y_maps, x_mesh, y_mesh, work_scale, seam_scale,
-                      seam_work_aspect, compose_scale, blender, compensator, warped_image_scale,
-                      blend_width, full_img_size))
+		seam_work_aspect, compose_scale, blender, compensator, warped_image_scale,
+		blend_width, full_img_size))
 	{
 		LOGLN("");
 		LOGLN("Calibration failed!");
@@ -315,13 +411,14 @@ int main(int argc, char* argv[])
 	int frame_amt = 0;
 
 	// ONLINE STITCHING // ------------------------------------------------------------------------------------------------------
-	while(1)
+	while (1)
 	{
 		vector<Mat> input;
 		bool capped;
 		if (use_stream) {
 			capped = getImages(que, input);
-		} else {
+		}
+		else {
 			capped = getImages(CAPTURES, input);
 		}
 		if (!capped) {
@@ -330,8 +427,8 @@ int main(int argc, char* argv[])
 
 		if (frame_amt && (frame_amt % RECALIB_DEL == 0) && recalibrate) {
 			int64 t = getTickCount();
-            recalibrateMesh(input, x_maps, y_maps, x_mesh, y_mesh, cameras[0].focal, compose_scale);
-			LOGLN("Rewarp: " << (getTickCount()-t)*1000/getTickFrequency());
+			recalibrateMesh(input, x_maps, y_maps, x_mesh, y_mesh, cameras[0].focal, compose_scale);
+			LOGLN("Rewarp: " << (getTickCount() - t) * 1000 / getTickFrequency());
 		}
 
 		stitch_one(compose_scale, input, x_maps, y_maps, x_mesh, y_mesh, mb, gc, results);
