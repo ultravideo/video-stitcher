@@ -48,14 +48,14 @@ cd build
 - bool clear_buffers: If true, clear all frame buffers between threads before pushing more data. Not really needed, only slows the program down.
 - bool debug_stream: If true show the input from network streams directly
 - bool use_surf: If true use SURF to find features. If false use ORB instead. ORB is faster but SURF gives way better features
-- bool send_results: If true, send the result to the player on localhost, using PLAYER_TCP_PORT
+- bool send_results: If true, send the result to the player on PLAYER_ADDRESS, using PLAYER_TCP_PORT (defaults are localhost, 55555)
 - bool send_height_info: If true and send_results is true, the height of the result image is sent to the player first. If send_results is false, this is ignored.
 - bool keep_aspect_ratio: If true, keep the aspect ratio of the image when resizing to the final size. Otherwise stretch the image to fit the output size.
 - bool add_black_bars: If true and keep_aspect_ratio is true, black bars are added above and below the image to fit the output size. If keep_aspect_ratio is false, this is ignored.
 - int NUM_IMAGES: Amount of video or network streams to stitch together
 - unsigned char clientAddrStart: Smallest value of the capture board IP's last octet. The boards have consecutive addresses (by default 10.21.25.41, ... , 10.21.25.46). This is used so that every board is in the same position every time, and the video streams are always in the correct order.
 - int OUTPUT_WIDTH, OUTPUT_HEIGHT: Dimensions of the output image. If keep_aspect_ratio is true and add_black_bars is false, the final output height may be smaller than this. Only the width of the output is guaranteed to always have this value.
-- int RESULTS_MAX_SIZE: Max size of the results queue, 0 means no limit. This is meant to avoid memory overflow if the frames are produced faster than consumed. However, checking the size every time slows the program down, so 0 is the fastest setting.
+- unsigned int RESULTS_MAX_SIZE: Max size of the results queue, 0 means no limit. This is meant to avoid memory overflow if the frames are produced faster than consumed. However, checking the size every time slows the program down, so 0 is the fastest setting.
 - int RECALIB_DEL: Amount of frames inbetween recalibration
 - double WORK_MEGAPIX: Size of images for feature finding and mesh warping
 - double SEAM_MEGAPIX: Size of used seam masks
