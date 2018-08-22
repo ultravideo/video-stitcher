@@ -53,15 +53,13 @@ public:
 		cond_.notify_one();
 	}
 
-	bool empty()
+	bool empty() const 
 	{
-		std::unique_lock<std::mutex> mlock(mutex_);
 		return queue_.empty();
 	}
 
-	size_t size()
+	size_t size() const
 	{
-		std::unique_lock<std::mutex> mlock(mutex_);
 		return queue_.size();
 	}
 private:

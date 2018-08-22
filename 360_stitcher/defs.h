@@ -5,13 +5,13 @@
 #include <iostream>
 #include <chrono>
 
-#define UNITY_TCP_PORT "55555"
+#define PLAYER_TCP_PORT "55555"
 
 const std::string base = "videos/";
 const std::string folder = base + "new";
 const int skip_frames = 220;
 const bool wrapAround = true;
-const bool recalibrate = false;
+const bool recalibrate = true;
 const bool enable_local = true;
 const bool save_video = false;
 const bool show_out = false;
@@ -20,12 +20,14 @@ const bool clear_buffers = false;
 const bool debug_stream = false;
 const bool use_surf = true;
 const bool send_results = true;
+const bool send_height_info = true;
 const bool keep_aspect_ratio = true;
+const bool add_black_bars = false;
 const int NUM_IMAGES = 6;
 const unsigned char clientAddrStart = 41; //The capture boards should have consecutive IP addresses, with the last octet starting from this number
 const int OUTPUT_WIDTH = 4096;
 const int OUTPUT_HEIGHT = 2048;
-const int RESULTS_MAX_SIZE = 5;
+const int RESULTS_MAX_SIZE = 0;
 //const int offsets[NUM_IMAGES] = {0, 37, 72, 72, 37}; // static
 //const int offsets[NUM_IMAGES] = {43, 153, 151, 131, 95, 0}; // new
 const int offsets[NUM_IMAGES] = { 0 }; // dynamic

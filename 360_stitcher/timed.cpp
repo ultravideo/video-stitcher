@@ -137,17 +137,17 @@ void stitch_one(double compose_scale, vector<Mat> &imgs, vector<cuda::GpuMat> &x
 			results.pop();
 		}
 	}
-	// Don't push to results if there are enough frames already. This is to prevent memory overflow, if the frames are not consumed fast enough.
-	if (results.size() < RESULTS_MAX_SIZE) {
+	// Don't push to results if there are enough frames already. This is to prevent memory overflow, if the frames are not consumed fast enough. Max size 0 means no limit.
+	if (RESULTS_MAX_SIZE == 0 || results.size() < RESULTS_MAX_SIZE) {
 		results.push(out);
 	}
 }
 
 void consume(BlockingQueue<cuda::GpuMat> &results) {
 	cuda::GpuMat mat;
+	cuda::GpuMat mat_8u;
 	bool first_frame = true;
 	VideoWriter outVideo;
-	Mat original;
 	Mat original_8u;
 	Mat resized_bgr;
 	Mat resized_rgb;
@@ -185,7 +185,7 @@ void consume(BlockingQueue<cuda::GpuMat> &results) {
 		//hints.ai_flags = AI_PASSIVE;
 
 		// Resolve the server address and port
-		iResult = getaddrinfo("localhost", UNITY_TCP_PORT, &hints, &result);
+		iResult = getaddrinfo("localhost", PLAYER_TCP_PORT, &hints, &result);
 		if (iResult != 0) {
 			printf("getaddrinfo failed with error: %d\n", iResult);
 			WSACleanup();
@@ -212,12 +212,15 @@ void consume(BlockingQueue<cuda::GpuMat> &results) {
 		}
 
 		freeaddrinfo(result);
-		LOGLN("Connected to Unity");
+		LOGLN("Connected to player");
 	}
 	Size resize_dst_size;
 	uchar* row_ptr = final_result.ptr(0);
 	std::chrono::high_resolution_clock::time_point tp = std::chrono::high_resolution_clock::now();
 	std::chrono::high_resolution_clock::time_point tp2;
+
+	int sent_bytes = 0;
+	int total_bytes = 0;
 	while (1) {
 		mat = results.pop();
 		if (mat.empty()) {
@@ -226,24 +229,30 @@ void consume(BlockingQueue<cuda::GpuMat> &results) {
 			}
 			return;
 		}
-		mat.download(original);
+		mat.convertTo(mat_8u, CV_8U);
+		mat_8u.download(original_8u);
 		if (first_frame) {
-			imwrite("calib.jpg", original);
+			imwrite("calib.jpg", original_8u);
+			int image_height;
 			if (keep_aspect_ratio) {
 				//Assume that we are resizing a wide image so that we need to add black bars above and below the image.
 				//Resize the width to exactly the correct size, and use the ratio between output and input widths to resize the height.
 				//Cols = width (number of columns) and rows = height (number of rows)
-				resize_dst_size = Size(OUTPUT_WIDTH, ((double)OUTPUT_WIDTH / (double)original.cols) * original.rows + 0.5);
-
+				image_height = (double)OUTPUT_WIDTH / (double)original_8u.cols * original_8u.rows + 0.5;
+				if (image_height > OUTPUT_HEIGHT) {
+					image_height = OUTPUT_HEIGHT;
+				}
 			}
 			else {
-				resize_dst_size = Size(OUTPUT_WIDTH, OUTPUT_HEIGHT);
+				image_height = OUTPUT_HEIGHT;
 			}
+			//total_bytes = OUTPUT_WIDTH * result_height * 3;
+			resize_dst_size = Size(OUTPUT_WIDTH, image_height);
+
+
 		}
-		original.convertTo(original_8u, CV_8U);
-		if (keep_aspect_ratio) {
-			//To keep the aspect ratio, first resize the original image and then copy it to the middle of a black image.
-			resize(original_8u, resized_bgr, resize_dst_size, 0, 0, INTER_LINEAR);
+		resize(original_8u, resized_bgr, resize_dst_size, 0, 0, INTER_LINEAR);
+		if (keep_aspect_ratio && add_black_bars) {
 			cvtColor(resized_bgr, resized_rgb, COLOR_BGR2RGB);
 			if (first_frame) {
 				row_ptr = final_result.ptr(final_result.rows / 2 - resized_rgb.rows / 2);
@@ -251,18 +260,42 @@ void consume(BlockingQueue<cuda::GpuMat> &results) {
 			memcpy(row_ptr, resized_rgb.data, resized_rgb.u->size);
 		}
 		else {
-			resize(original_8u, final_result, resize_dst_size, 0, 0, INTER_LINEAR);
-		}
-
-		if (send_results) {
-			iSendResult = send(ConnectSocket, (char*)final_result.data, (int)final_result.u->size, NULL);
-		}
-		if (save_video) {
-			outVideo << resized_rgb;
+			cvtColor(resized_bgr, final_result, COLOR_BGR2RGB);
 		}
 		if (first_frame) {
-			imwrite("calib_resized.jpg", resized_rgb);
-			imwrite("texout.jpg", final_result);
+			total_bytes = final_result.u->size;
+			if (send_results && send_height_info) {
+				//Tell the image height to the player. This has to be done, because the height can vary between different runs. The player
+				//needs this information to place the image correctly on the sphere.
+				int result_height = final_result.rows;
+				iSendResult = send(ConnectSocket, (char*)&result_height, sizeof(int), NULL);
+				if (iSendResult == SOCKET_ERROR) {
+					printf("sending image height failed with error: %d\n", WSAGetLastError());
+					closesocket(ConnectSocket);
+					WSACleanup();
+					return;
+				}
+			}
+		}
+		if (send_results) {
+			do {
+				iSendResult = send(ConnectSocket, (char*)final_result.data + sent_bytes, total_bytes - sent_bytes, NULL);
+				if (iSendResult == SOCKET_ERROR) {
+					printf("send failed with error: %d\n", WSAGetLastError());
+					closesocket(ConnectSocket);
+					WSACleanup();
+					return;
+				}
+				sent_bytes += iSendResult;
+			} while (sent_bytes != total_bytes);
+			sent_bytes = 0;
+		}
+		if (save_video) {
+			outVideo << final_result;
+		}
+		if (first_frame) {
+			imwrite("calib_resized.jpg", resized_bgr);
+			imwrite("result.jpg", final_result);
 			first_frame = false;
 		}
 		if (show_out) {
