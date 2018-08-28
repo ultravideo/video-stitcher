@@ -1,4 +1,5 @@
 #include "networking.h"
+#include "defs.h"
 #ifndef LINUX
 #include <WS2tcpip.h>
 #include <windows.h>
@@ -13,12 +14,6 @@
 #include <stdio.h>
 #include <opencv2/imgproc.hpp>
 #include <thread>
-
-#define DEFAULT_PORT "6666"
-#define DEFAULT_ADDRESS NULL
-#define IMG_WIDTH 1920
-#define IMG_HEIGHT 1620
-#define CHANNELS 1
 
 
 #ifndef LINUX
@@ -84,7 +79,7 @@ int startPolling(std::vector<BlockingQueue<cv::Mat>> &queues)
     hints.ai_flags = AI_PASSIVE;
 
     // Resolve the server address and port
-    iResult = getaddrinfo(NULL, DEFAULT_PORT, &hints, &result);
+    iResult = getaddrinfo(NULL, CAPTURE_TCP_PORT, &hints, &result);
     if (iResult != 0) {
         printf("getaddrinfo failed with error: %d\n", iResult);
         WSACleanup();
@@ -201,9 +196,9 @@ void pollClients(int ListenSocket, struct sockaddr_in &cli_addr, std::vector<Blo
 void pollFrames(SOCKET ConnectSocket, BlockingQueue<cv::Mat> &queue)
 {
 	int iResult;
-	const int frame_total_bytes = IMG_WIDTH * IMG_HEIGHT * CHANNELS;
+	const int frame_total_bytes = CAPTURE_IMG_WIDTH * CAPTURE_IMG_HEIGHT * CAPTURE_IMG_CHANNELS;
 	cv::Mat bgr_frame;
-	cv::Mat mat(cv::Size(IMG_WIDTH, IMG_HEIGHT), CV_MAKETYPE(CV_8U, CHANNELS));
+	cv::Mat mat(cv::Size(CAPTURE_IMG_WIDTH, CAPTURE_IMG_HEIGHT), CV_MAKETYPE(CV_8U, CAPTURE_IMG_CHANNELS));
 	char* const data_ptr = (char*)mat.data;
 	// Receive until the peer closes the connection
 	do {

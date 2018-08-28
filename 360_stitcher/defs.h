@@ -5,6 +5,17 @@
 #include <iostream>
 #include <chrono>
 
+#define CAPTURE_TCP_PORT "6666"
+
+/* The capture stream is in 1920*1080 resolution, YUV 4:2:0 NV12 format. The format has a 1 channel, 1920*1080 Y plane, and a 1 channel, 1920*540 (i.e. same width, half height) UV plane.
+ * The UV plane is directly after the Y plane, so the data of one full image is 1 channel, 1920*1620 bytes. The image is converted to 3-channel, 1920*1080
+ * BGR format after receiving it.
+ */
+
+#define CAPTURE_IMG_WIDTH 1920
+#define CAPTURE_IMG_HEIGHT 1620
+#define CAPTURE_IMG_CHANNELS 1
+
 #define PLAYER_ADDRESS "localhost"
 #define PLAYER_TCP_PORT "55555"
 

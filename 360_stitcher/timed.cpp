@@ -151,6 +151,7 @@ void consume(BlockingQueue<cuda::GpuMat> &results) {
 	Mat original_8u;
 	Mat resized_bgr;
 	Mat resized_rgb;
+	//Initialize final_result as a black image
 	Mat final_result = Mat(Size(OUTPUT_WIDTH, OUTPUT_HEIGHT), CV_8UC3, cv::Scalar(0));
 	if (save_video) {
 		outVideo.open("stitched.avi", VideoWriter::fourcc('M', 'J', 'P', 'G'), 30, Size(1920, 1080));
@@ -235,7 +236,7 @@ void consume(BlockingQueue<cuda::GpuMat> &results) {
 			imwrite("calib.jpg", original_8u);
 			int image_height;
 			if (keep_aspect_ratio) {
-				//Assume that we are resizing a wide image so that we need to add black bars above and below the image.
+				//Assume that we are resizing a very wide image, so that output width is the more restricting dimension.
 				//Resize the width to exactly the correct size, and use the ratio between output and input widths to resize the height.
 				//Cols = width (number of columns) and rows = height (number of rows)
 				image_height = (double)OUTPUT_WIDTH / (double)original_8u.cols * original_8u.rows + 0.5;
@@ -246,14 +247,13 @@ void consume(BlockingQueue<cuda::GpuMat> &results) {
 			else {
 				image_height = OUTPUT_HEIGHT;
 			}
-			//total_bytes = OUTPUT_WIDTH * result_height * 3;
 			resize_dst_size = Size(OUTPUT_WIDTH, image_height);
-
 
 		}
 		resize(original_8u, resized_bgr, resize_dst_size, 0, 0, INTER_LINEAR);
 		if (keep_aspect_ratio && add_black_bars) {
 			cvtColor(resized_bgr, resized_rgb, COLOR_BGR2RGB);
+			// To add black bars, the stitched image is copied to the middle of a black image
 			if (first_frame) {
 				row_ptr = final_result.ptr(final_result.rows / 2 - resized_rgb.rows / 2);
 			}
