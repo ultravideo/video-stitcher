@@ -46,4 +46,4 @@ opencv_xfeatures2d340.dl
 
 Debugversioissa pääte on *340d.dll
 
-DLL:t löytyy hakemistosta $(ProjectDir)..\opencv_build\bin (olettaen, että openCV:n käännöskohdehakemistoksi on asetettu $(ProjectDir)..\opencv_build cmakessa).
+DLL:t löytyy hakemiston $(ProjectDir)..\opencv_build\bin alihakemistoista Release ja Debug (olettaen, että openCV:n käännöskohdehakemistoksi on asetettu $(ProjectDir)..\opencv_build cmakessa).
