@@ -11,7 +11,7 @@
 - copy the cuda lib and include folders to $(ProjectDir)
 
 #### OpenCV
-- Make visual studio project with cmake from $(ProjectDir)/sources to $(ProjectDir)/opencv_build
+- Make visual studio project with cmake from $(ProjectDir)../sources to $(ProjectDir)../opencv_build
 - set WITH\_CUDA flag true and CUDA\_HOST\_COMPILER to the path where your visual c compiler is. (_VSINSTALLFOLDER_/VC/Tools/MSVC/_VERSIONNUMBER_/bin/Hostx64/x64/cl.exe)
 - In visual studio build the project "INSTALL"
 - On linux run following commands starting in base folder
