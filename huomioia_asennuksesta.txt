@@ -21,3 +21,29 @@ OpenCV riippuvuudet:
 	- katso, että kääntäjä on VC kääntäjä! (cmake defaulttina hakee väärästä polusta kääntäjää)
 * numpy
 * (java?)
+
+
+OpenCV:n dll:t tarvitsee kopioida käännöshakemistoihin. Projektin debug-versio käyttää openCV:n debug -kirjastoja, joten openCV täytyy kääntää myös debug -asetuksella.
+Tarvittavia DLL:iä ovat ainkin:
+
+opencv_calib3d340.dll
+opencv_core340.dll
+opencv_cudaaritm340.dll
+opencv_cudafeatures2d340.dll
+opencv_cudafilters340.dll
+opencv_cudaimgproc340.dll
+opencv_cudalegacy340.dll
+opencv_cudawarping340.dll
+opencv_feature2d340.dll
+opencv_ffmpeg340.dll (TÄMÄN PUUTTUMINEN EI AIHEUTA KAATUMISTA EIKÄ VIRHEILMOA, MUTTA ESIM. VIDEOTA EI SAA AVATTUA)
+opencv_flann340.dll
+opencv_highgui340.dll
+opencv_imgproc340.dll
+opencv_objdetect340.dll
+opencv_stitching340.dll
+opencv_videoio340.dll
+opencv_xfeatures2d340.dl
+
+Debugversioissa pääte on *340d.dll
+
+DLL:t löytyy hakemistosta $(ProjectDir)..\opencv_build\bin (olettaen, että openCV:n käännöskohdehakemistoksi on asetettu $(ProjectDir)..\opencv_build cmakessa).
