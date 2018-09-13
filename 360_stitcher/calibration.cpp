@@ -140,9 +140,9 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
     cameras = vector<CameraParams>(NUM_IMAGES);
     //estimateFocal(features, pairwise_matches, focals);
     for (int i = 0; i < cameras.size(); ++i) {
-        double rot = 2 * PI * (i+0) / 6;
+        double rot = 2 * PI * (i+0) / 6; //kameroiden paikat paikat. jaetaan aina kuudella viakka kameroiden määrä on kai cameras.size() funktiolta kysyttävissä...
         Mat rotMat(3, 3, CV_32F);
-        double L[3] = {cos(rot), 0, sin(rot)};
+        double L[3] = {cos(rot), 0, sin(rot)};//miksi nämä on tässä doubleja, kun ne konvertoidaan floateiksi ihan kohta?
         double u[3] = {0, 1, 0};
         double s[3] = {L[1]*u[2] - L[2]*u[1], L[2]*u[0] - L[0]*u[2], L[0]*u[1] - L[1]*u[0]};
         double y[3] = {s[1]*L[2] - s[2]*L[1], s[2]*L[0] - s[0]*L[2], s[0]*L[1] - s[1]*L[0]};
@@ -156,7 +156,7 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
         rotMat.at<float>(2, 1) = -L[1];
         rotMat.at<float>(2, 2) = -L[2];
         cameras[i].R = rotMat;
-        cameras[i].ppx = features[i].img_size.width / 2;
+        cameras[i].ppx = features[i].img_size.width / 2; //keskitetäänkö tässä kuva vai oletetaanko, että fovit overlappaa about puolsta välistä?
         cameras[i].ppy = features[i].img_size.height / 2;
     }
     

@@ -377,6 +377,7 @@ int main(int argc, char* argv[])
 	// Videofeed input
 	if (!use_stream) {
 		for (int i = 0; i < NUM_IMAGES; ++i) {
+			std::cout << video_files[i] << std::endl;
 			CAPTURES.push_back(VideoCapture(video_files[i]));
 			if (!CAPTURES[i].isOpened()) {
 				LOGLN("ERROR: Unable to open videofile(s).");
