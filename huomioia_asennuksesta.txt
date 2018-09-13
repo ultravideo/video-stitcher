@@ -1,0 +1,21 @@
+Huomiot Cudan asennuksesta:
+
+* cudan asennuksessa näytönohjaimen asennus saattaa epäonnistua.
+	- Hae uudet ajurit nvidian sivuilta, jos default ajuri ei ole cuda-yhteensopiva.
+		- Yhteensopivuuden voi testata kääntämällä cudan esimerkkiprojekti "deviceQuery" (oletusasennuksella) polusta
+		"C:\ProgramData\NVIDIA Corporation\CUDA Samples\v9.2\1_Utilities" (kääntyy polkuun "C:\ProgramData\NVIDIA Corporation\CUDA Samples\v9.2\bin\win64\Release")
+			- Aja ohjelma komentorivillä.
+	- Lisää ohjeita: https://docs.nvidia.com/cuda/cuda-installation-guide-microsoft-windows/index.html (osa vähän vanhentuneita)
+* ÄLÄ asenna visualstudio 2017 päivityksiä, koska ne rikkovat cuda-yhteensopivuuden.
+
+OpenCV riippuvuudet:
+
+* OpenCV haluaisi koko maailman kaikki kirjastot käyttöönsä. Mutta ainkin nämä näyttivät olevan ns. välttämättömiä.
+* cmake
+	* python
+	* pylint
+* cuda
+	- katso hakemistopolut oikein cuda-kirjastoille cmake confissa!
+	- katso, että kääntäjä on VC kääntäjä! (cmake defaulttina hakee väärästä polusta kääntäjää)
+* numpy
+* (java?)
