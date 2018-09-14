@@ -96,8 +96,9 @@
       <AdditionalDependencies>opencv_calib3d340d.lib;opencv_core340d.lib;opencv_cudaarithm340d.lib;opencv_xfeatures2d340d.lib;opencv_cudabgsegm340d.lib;opencv_cudacodec340d.lib;opencv_cudafeatures2d340d.lib;opencv_cudafilters340d.lib;opencv_cudaimgproc340d.lib;opencv_cudalegacy340d.lib;opencv_cudaoptflow340d.lib;opencv_cudastereo340d.lib;opencv_cudawarping340d.lib;opencv_cudev340d.lib;opencv_dnn340d.lib;opencv_features2d340d.lib;opencv_flann340d.lib;opencv_highgui340d.lib;opencv_imgcodecs340d.lib;opencv_imgproc340d.lib;opencv_ml340d.lib;opencv_objdetect340d.lib;opencv_photo340d.lib;opencv_shape340d.lib;opencv_stitching340d.lib;opencv_superres340d.lib;opencv_video340d.lib;opencv_videoio340d.lib;opencv_videostab340d.lib;cuda.lib;cudart.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <CudaCompile>
-      <CodeGeneration>compute_50,sm_50</CodeGeneration>
+      <CodeGeneration>compute_52,sm_52</CodeGeneration>
       <TargetMachinePlatform>64</TargetMachinePlatform>
+      <GenerateLineInfo>true</GenerateLineInfo>
     </CudaCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -131,6 +132,9 @@
       <AdditionalDependencies>opencv_calib3d340.lib;opencv_core340.lib;opencv_cudaarithm340.lib;opencv_xfeatures2d340.lib;opencv_cudabgsegm340.lib;opencv_cudacodec340.lib;opencv_cudafeatures2d340.lib;opencv_cudafilters340.lib;opencv_cudaimgproc340.lib;opencv_cudalegacy340.lib;opencv_cudaoptflow340.lib;opencv_cudastereo340.lib;opencv_cudawarping340.lib;opencv_cudev340.lib;opencv_dnn340.lib;opencv_features2d340.lib;opencv_flann340.lib;opencv_highgui340.lib;opencv_imgcodecs340.lib;opencv_imgproc340.lib;opencv_ml340.lib;opencv_objdetect340.lib;opencv_photo340.lib;opencv_shape340.lib;opencv_stitching340.lib;opencv_superres340.lib;opencv_video340.lib;opencv_videoio340.lib;opencv_videostab340.lib;cuda.lib;cudart.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <SubSystem>Console</SubSystem>
     </Link>
+    <CudaCompile>
+      <CodeGeneration>compute_52,sm_52</CodeGeneration>
+    </CudaCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="calibration.cpp" />
@@ -150,6 +154,6 @@
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
-    <Import Project="C:\Program Files (x86)\Microsoft Visual Studio\2017\Enterprise\Common7\IDE\VC\VCTargets\BuildCustomizations\CUDA 9.2.targets"/>
+    <Import Project="C:\Program Files (x86)\Microsoft Visual Studio\2017\Enterprise\Common7\IDE\VC\VCTargets\BuildCustomizations\CUDA 9.2.targets" />
   </ImportGroup>
 </Project>
