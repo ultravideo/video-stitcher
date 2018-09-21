@@ -140,12 +140,12 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
     cameras = vector<CameraParams>(NUM_IMAGES);
     //estimateFocal(features, pairwise_matches, focals);
     for (int i = 0; i < cameras.size(); ++i) {
-        double rot = 2 * PI * (i+0) / 6; //kameroiden paikat paikat. jaetaan aina kuudella viakka kameroiden määrä on kai cameras.size() funktiolta kysyttävissä...
-        Mat rotMat(3, 3, CV_32F);
-        double L[3] = {cos(rot), 0, sin(rot)};//miksi nämä on tässä doubleja, kun ne konvertoidaan floateiksi ihan kohta?
-        double u[3] = {0, 1, 0};
-        double s[3] = {L[1]*u[2] - L[2]*u[1], L[2]*u[0] - L[0]*u[2], L[0]*u[1] - L[1]*u[0]};
-        double y[3] = {s[1]*L[2] - s[2]*L[1], s[2]*L[0] - s[0]*L[2], s[0]*L[1] - s[1]*L[0]};
+        float rot = static_cast<float>(2.0 * PI * static_cast<float>(i) / 6.0); //kameroiden paikat ympyrän kehällä.
+        //Mat rotMat(3, 3, CV_32F);
+        /*float L[3] = {cos(rot), 0, sin(rot)};
+		float u[3] = {0, 1, 0};
+		float s[3] = {L[1]*u[2] - L[2]*u[1], L[2]*u[0] - L[0]*u[2], L[0]*u[1] - L[1]*u[0]};
+		float y[3] = {s[1]*L[2] - s[2]*L[1], s[2]*L[0] - s[0]*L[2], s[0]*L[1] - s[1]*L[0]};
         rotMat.at<float>(0, 0) = s[0];
         rotMat.at<float>(0, 1) = s[1];
         rotMat.at<float>(0, 2) = s[2];
@@ -154,10 +154,18 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
         rotMat.at<float>(1, 2) = y[2];
         rotMat.at<float>(2, 0) = -L[0];
         rotMat.at<float>(2, 1) = -L[1];
-        rotMat.at<float>(2, 2) = -L[2];
+        rotMat.at<float>(2, 2) = -L[2];*/
+
+		Mat rotMat = (Mat_<float>(3, 3) <<
+			cos(rot), 0, sin(rot),
+			0, 1, 0,
+			-sin(rot), 0, cos(rot));
+
+
         cameras[i].R = rotMat;
-        cameras[i].ppx = features[i].img_size.width / 2; //keskitetäänkö tässä kuva vai oletetaanko, että fovit overlappaa about puolsta välistä?
-        cameras[i].ppy = features[i].img_size.height / 2;
+        cameras[i].ppx = features[i].img_size.width / 2.0; //principal point x
+        cameras[i].ppy = features[i].img_size.height / 2.0; // principal point y
+		cameras[i].aspect = 16.0 / 9.0;
     }
     
     int points = 10;
@@ -171,7 +179,7 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
             ++skips;
             continue;
         }
-        int matches = pw_matches.matches.size();
+        int matches = static_cast<int>(pw_matches.matches.size());
         if (!matches) {
             ++skips;
             continue;
@@ -191,16 +199,16 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
             float err;
             float f = 500;
             float delta = 10;
-            float decay = 0.99;
+            float decay = (float)0.99;
             float err_thresh = 1;
             while (1) {
                 f += delta;
                 float x1_ = f * atan(x1 / f);
-                float theta = j - i;
+                float theta = static_cast<float>(j - i);
                 if (i == 0 && j == NUM_IMAGES - 1 && wrapAround) {
                     theta = -1;
                 }
-                theta *= 2 * PI / 6;
+                theta *= 2 * (float)PI / 6;
                 float x2_ = f * (theta + atan(x2 / f));
                 float y1_ = f * y1 / sqrt(x1*x1 + f*f);
                 float y2_ = f * y2 / sqrt(x2*x2 + f*f);
@@ -225,6 +233,11 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
     
     std::sort(focals.begin(), focals.end());
 
+	//vector<double> focals;
+	//estimateFocal(features, pairwise_matches, focals);
+
+	std::cout << "Focals: " << focals.size() << std::endl;
+
     if (focals.size() % 2 == 1)
     {
         warped_image_scale = (focals[focals.size() / 2]);
@@ -234,8 +247,11 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
         warped_image_scale = (focals[focals.size() / 2 - 1] + focals[focals.size() / 2]) * 0.5f;
     }
 
+	std::cout << "Warped image scale: " << warped_image_scale << std::endl;
+
     for (int i = 0; i < cameras.size(); ++i) {
         cameras[i].focal = warped_image_scale;
+		//std::cout << "Focal " << i << ": " << cameras[i].focal << std::endl;
     }
     return true;
 }
@@ -439,8 +455,8 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features,
         y_mesh[idx] = cuda::GpuMat(mesh_size[idx], CV_32FC1);
         for (int i = 0; i < N; ++i) {
             for (int j = 0; j < M; ++j) {
-                mesh_cpu_x[idx].at<float>(i, j) = j * mesh_size[idx].width / (M-1);
-                mesh_cpu_y[idx].at<float>(i, j) = i * mesh_size[idx].height / (N-1);
+                mesh_cpu_x[idx].at<float>(i, j) = static_cast<float>(j) * mesh_size[idx].width / (M-1);
+                mesh_cpu_y[idx].at<float>(i, j) = static_cast<float>(i) * mesh_size[idx].height / (N-1);
             }
         }
     }
@@ -448,7 +464,7 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features,
     int features_per_image = MAX_FEATURES_PER_IMAGE;
     // 2 * images.size()*N*M for global alignment, 2*images.size()*(N-1)*(M-1) for smoothness term and
     // 2 * (NUM_IMAGES +(int)wrapAround) * features_per_image for local alignment
-    int num_rows = 2 * images.size()*N*M + 2*images.size()*(N-1)*(M-1) +
+    int num_rows = 2 * static_cast<int>(images.size())*N*M + 2* static_cast<int>(images.size())*(N-1)*(M-1) +
                    2 * (NUM_IMAGES + (int)wrapAround) * features_per_image;
     Eigen::SparseMatrix<double> A(num_rows, 2*N*M*images.size());
     Eigen::VectorXd b(num_rows), x;
@@ -460,8 +476,8 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features,
     for (int idx = 0; idx < images.size(); ++idx) {
         for (int i = 0; i < N; ++i) {
             for (int j = 0; j < M; ++j) {
-                float x1 = j * mesh_size[idx].width / (M-1);
-                float y1 = i * mesh_size[idx].height / (N-1);
+                float x1 = static_cast<float>(j * mesh_size[idx].width / (M-1));
+                float y1 = static_cast<float>(i * mesh_size[idx].height / (N-1));
                 float scale = compose_scale / work_scale;
                 float tau = 1;
                 for (int ft = 0; ft < features[idx].keypoints.size(); ++ft) {
