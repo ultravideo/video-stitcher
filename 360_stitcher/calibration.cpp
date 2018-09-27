@@ -141,6 +141,7 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
     //estimateFocal(features, pairwise_matches, focals);
     for (int i = 0; i < cameras.size(); ++i) {
         float rot = static_cast<float>(2.0 * PI * static_cast<float>(i) / 6.0); //kameroiden paikat ympyrän kehällä.
+
         //Mat rotMat(3, 3, CV_32F);
         /*float L[3] = {cos(rot), 0, sin(rot)};
 		float u[3] = {0, 1, 0};
@@ -156,16 +157,30 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
         rotMat.at<float>(2, 1) = -L[1];
         rotMat.at<float>(2, 2) = -L[2];*/
 
-		Mat rotMat = (Mat_<float>(3, 3) <<
+		Mat Rx = (Mat_<float>(3, 3) <<
+			1, 0, 0,
+			0, cos(0), -sin(0),
+			0, sin(0), cos(0)); //Only for example as we do not have this rotation the matrix becomes an identity matrix --> no need
+
+		Mat Ry = (Mat_<float>(3, 3) <<
 			cos(rot), 0, sin(rot),
 			0, 1, 0,
-			-sin(rot), 0, cos(rot));
+			-sin(rot), 0, cos(rot)); //The cameras in the grid are rotated around y-axis. No other rotation is present.
 
+		Mat Rz = (Mat_<float>(3, 3) <<
+			cos(0), -sin(0), 0,
+			sin(0), cos(0), 0,
+			0, 0, 1); //Only for example as we do not have this rotation the matrix becomes an identity matrix --> no need
+
+		Mat rotMat = Rz * Ry * Rx; //the order to combine euler angle matrixes to rotation matrix is ZYX!
 
         cameras[i].R = rotMat;
         cameras[i].ppx = features[i].img_size.width / 2.0; //principal point x
         cameras[i].ppy = features[i].img_size.height / 2.0; // principal point y
-		cameras[i].aspect = 16.0 / 9.0;
+		cameras[i].aspect = 16.0 / 9.0; //as it is known the cameras have 1080p resolution, the aspect ratio is known to be 16:9
+		//in 1080p resolution with medium fov (127 degrees) the focal lengt is 21mm.
+		// with fov 170 degrees the focal lenth is 14mm and with fov 90 degrees the focal length is 28mm 
+		// This information from gopro cameras is found from internet may be different for the model used in the grid!!! 
     }
     
     int points = 10;
