@@ -182,6 +182,9 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
 		// with fov 170 degrees the focal lenth is 14mm and with fov 90 degrees the focal length is 28mm 
 		// This information from gopro cameras is found from internet may be different for the model used in the grid!!! 
     }
+
+	//vector<double> focals;
+	//estimateFocal(features, pairwise_matches, focals);
     
     int points = 10;
     int skips = 0;
@@ -246,22 +249,19 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
         }
     }
     
-    std::sort(focals.begin(), focals.end());
+	
+	//calculating the median focal length
+	std::nth_element(focals.begin(), focals.begin()+floor((focals.size()/2)), focals.end());
 
-	//vector<double> focals;
-	//estimateFocal(features, pairwise_matches, focals);
+	warped_image_scale = focals.at(floor((focals.size() / 2)));
 
-	std::cout << "Focals: " << focals.size() << std::endl;
+	if (focals.size() % 2 == 0) {
+		warped_image_scale += focals.at(focals.size()/2 + 1);
+		warped_image_scale *= 0.5f;
+	}
 
-    if (focals.size() % 2 == 1)
-    {
-        warped_image_scale = (focals[focals.size() / 2]);
-    }
-    else
-    {
-        warped_image_scale = (focals[focals.size() / 2 - 1] + focals[focals.size() / 2]) * 0.5f;
-    }
-
+	std::cout << "Focals size: " << focals.size() << std::endl;
+	std::cout << "Nth element: " << focals.at(floor((focals.size() / 2))) << std::endl;
 	std::cout << "Warped image scale: " << warped_image_scale << std::endl;
 
     for (int i = 0; i < cameras.size(); ++i) {
