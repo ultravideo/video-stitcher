@@ -139,31 +139,11 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
                       vector<CameraParams> &cameras, float &warped_image_scale) {
     cameras = vector<CameraParams>(NUM_IMAGES);
 
-	//vector<double> focals;
-    //estimateFocal(features, pairwise_matches, focals);
-
 	double fov = 90.0*PI/180.0;
 	double focal_tmp = 1.0/(tan(fov*0.5));
-	//vector<double> focals_tmp;
-
 
     for (int i = 0; i < cameras.size(); ++i) {
-        float rot = static_cast<float>(2.0 * PI * static_cast<float>(i) / 6.0); //kameroiden paikat ympyrän kehällä.
-
-        //Mat rotMat(3, 3, CV_32F);
-        /*float L[3] = {cos(rot), 0, sin(rot)};
-		float u[3] = {0, 1, 0};
-		float s[3] = {L[1]*u[2] - L[2]*u[1], L[2]*u[0] - L[0]*u[2], L[0]*u[1] - L[1]*u[0]};
-		float y[3] = {s[1]*L[2] - s[2]*L[1], s[2]*L[0] - s[0]*L[2], s[0]*L[1] - s[1]*L[0]};
-        rotMat.at<float>(0, 0) = s[0];
-        rotMat.at<float>(0, 1) = s[1];
-        rotMat.at<float>(0, 2) = s[2];
-        rotMat.at<float>(1, 0) = y[0];
-        rotMat.at<float>(1, 1) = y[1];
-        rotMat.at<float>(1, 2) = y[2];
-        rotMat.at<float>(2, 0) = -L[0];
-        rotMat.at<float>(2, 1) = -L[1];
-        rotMat.at<float>(2, 2) = -L[2];*/
+        float rot = static_cast<float>(2.0 * PI * static_cast<float>(i) / NUM_IMAGES); //kameroiden paikat ympyrän kehällä.
 
 		Mat Rx = (Mat_<float>(3, 3) <<
 			1, 0, 0,
@@ -189,100 +169,13 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
 		//in 1080p resolution with medium fov (127 degrees) the focal lengt is 21mm.
 		// with fov 170 degrees the focal lenth is 14mm and with fov 90 degrees the focal length is 28mm 
 		// This information from gopro cameras is found from internet may be different for the model used in the grid!!!
-
-		//focals_tmp.push_back(focal_tmp*cameras[i].ppx);
 		
 		cameras[i].focal = focal_tmp * cameras[i].ppx;
 		std::cout << "Focal " << i << ": " << cameras[i].focal << std::endl;
     }
 
-	warped_image_scale = cameras[0].focal;
+	warped_image_scale = static_cast<float>(cameras[0].focal);
 	std::cout << "Warped image scale: " << warped_image_scale << std::endl;
-
-    
-   /* int points = 10;
-    int skips = 0;
-    vector<float> focals;
-    for (int idx = 0; idx < pairwise_matches.size(); ++idx) {
-        MatchesInfo &pw_matches = pairwise_matches[idx];
-        int i = pw_matches.src_img_idx;
-        int j = pw_matches.dst_img_idx;
-        if (abs(i - j - 1) > 0.1) {
-            ++skips;
-            continue;
-        }
-        int matches = static_cast<int>(pw_matches.matches.size());
-        if (!matches) {
-            ++skips;
-            continue;
-        }
-        for (int k = 0; k < points; ++k) {
-            int match_idx = rand() % matches;
-            int idx1 = pw_matches.matches[match_idx].queryIdx;
-            int idx2 = pw_matches.matches[match_idx].trainIdx;
-            KeyPoint k1 = features[i].keypoints[idx1];
-            KeyPoint k2 = features[j].keypoints[idx2];
-            float x1 = k1.pt.x - features[i].img_size.width / 2;
-            float y1 = k1.pt.y - features[i].img_size.height / 2;
-            float x2 = k2.pt.x - features[j].img_size.width / 2;
-            float y2 = k2.pt.y - features[j].img_size.height / 2;
-            float best_f;
-            float best_err = std::numeric_limits<float>::max();
-            float err;
-            float f = 500;
-            float delta = 10;
-            float decay = (float)0.99;
-            float err_thresh = 1;
-            while (1) {
-                f += delta;
-                float x1_ = f * atan(x1 / f);
-                float theta = static_cast<float>(j - i);
-                if (i == 0 && j == NUM_IMAGES - 1 && wrapAround) {
-                    theta = -1;
-                }
-                theta *= 2 * (float)PI / 6;
-                float x2_ = f * (theta + atan(x2 / f));
-                float y1_ = f * y1 / sqrt(x1*x1 + f*f);
-                float y2_ = f * y2 / sqrt(x2*x2 + f*f);
-                err = sqrt((x1_ - x2_)*(x1_ - x2_) + (y1_ - y2_)*(y1_ - y2_));
-                if (err < best_err) {
-                    best_f = f;
-                    best_err = err;
-                }
-                else {
-                    f = best_f;
-                    delta *= -1;
-                }
-                if (err < err_thresh || abs(delta) < 0.1) {
-                    break;
-                }
-                delta *= decay;
-            }
-            float dist = pw_matches.matches[match_idx].distance;
-            focals.push_back(best_f);
-        }
-    }
-    
-	
-	//calculating the median focal length
-	std::nth_element(focals.begin(), focals.begin()+floor((focals.size()/2)), focals.end());
-
-	warped_image_scale = focals.at(floor((focals.size() / 2)));
-
-	if (focals.size() % 2 == 0) {
-		warped_image_scale += focals.at(focals.size()/2 + 1);
-		warped_image_scale *= 0.5f;
-	}
-
-	std::cout << "Focals size: " << focals.size() << std::endl;
-	std::cout << "Nth element: " << focals.at(floor((focals.size() / 2))) << std::endl;
-	std::cout << "Warped image scale: " << warped_image_scale << std::endl;
-
-    for (int i = 0; i < cameras.size(); ++i) {
-        cameras[i].focal = warped_image_scale;
-		//std::cout << "Focal " << i << ": " << cameras[i].focal << std::endl;
-    }*/
-
 
     return true;
 }
