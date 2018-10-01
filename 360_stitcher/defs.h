@@ -23,8 +23,8 @@ const std::string base = "videos/";
 const std::string folder = base + "new";
 const int skip_frames = 135;
 const bool wrapAround = true;
-const bool recalibrate = true;
-const bool enable_local = true;
+const bool recalibrate = false;
+const bool enable_local = false;
 const bool save_video = false;
 const bool show_out = true;
 const bool use_stream = false;
@@ -56,13 +56,13 @@ const int NOCTAVESLAYERS = 2;
 
 const int MAX_FEATURES_PER_IMAGE = 20;
 const bool VISUALIZE_MATCHES = false; // Draw the meshes and matches to images pre mesh warp
-const bool VISUALIZE_WARPED = false; // Draw the warped mesh
+const bool VISUALIZE_WARPED = true; // Draw the warped mesh
 const int N = 2;
 const int M = 2;
 // Alphas are weights for different cost functions
 // 0: Local alignment, 1: Global alignment, 2: Smoothness
-const float ALPHAS[3] = {1, 0.11f, 0.001f};
-const int GLOBAL_DIST = 5; // Maximum distance from vertex in global warping
+const float ALPHAS[3] = {0.5f, 1.0f, 0.001f};
+const int GLOBAL_DIST = 4; // Maximum distance from vertex in global warping
 
 // Test material before right videos are obtained from the camera rig
 const std::vector<std::string> video_files = {folder + "/0.mp4", folder + "/1.mp4", folder + "/2.mp4", folder + "/3.mp4", folder + "/4.mp4", folder + "/5.mp4"};
