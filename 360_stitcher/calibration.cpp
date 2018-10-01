@@ -138,7 +138,15 @@ void matchFeatures(vector<ImageFeatures> &features, vector<MatchesInfo> &pairwis
 bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pairwise_matches,
                       vector<CameraParams> &cameras, float &warped_image_scale) {
     cameras = vector<CameraParams>(NUM_IMAGES);
+
+	//vector<double> focals;
     //estimateFocal(features, pairwise_matches, focals);
+
+	double fov = 90.0*PI/180.0;
+	double focal_tmp = 1.0/(tan(fov*0.5));
+	//vector<double> focals_tmp;
+
+
     for (int i = 0; i < cameras.size(); ++i) {
         float rot = static_cast<float>(2.0 * PI * static_cast<float>(i) / 6.0); //kameroiden paikat ympyrän kehällä.
 
@@ -180,13 +188,19 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
 		cameras[i].aspect = 16.0 / 9.0; //as it is known the cameras have 1080p resolution, the aspect ratio is known to be 16:9
 		//in 1080p resolution with medium fov (127 degrees) the focal lengt is 21mm.
 		// with fov 170 degrees the focal lenth is 14mm and with fov 90 degrees the focal length is 28mm 
-		// This information from gopro cameras is found from internet may be different for the model used in the grid!!! 
+		// This information from gopro cameras is found from internet may be different for the model used in the grid!!!
+
+		//focals_tmp.push_back(focal_tmp*cameras[i].ppx);
+		
+		cameras[i].focal = focal_tmp * cameras[i].ppx;
+		std::cout << "Focal " << i << ": " << cameras[i].focal << std::endl;
     }
 
-	//vector<double> focals;
-	//estimateFocal(features, pairwise_matches, focals);
+	warped_image_scale = cameras[0].focal;
+	std::cout << "Warped image scale: " << warped_image_scale << std::endl;
+
     
-    int points = 10;
+   /* int points = 10;
     int skips = 0;
     vector<float> focals;
     for (int idx = 0; idx < pairwise_matches.size(); ++idx) {
@@ -267,7 +281,9 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
     for (int i = 0; i < cameras.size(); ++i) {
         cameras[i].focal = warped_image_scale;
 		//std::cout << "Focal " << i << ": " << cameras[i].focal << std::endl;
-    }
+    }*/
+
+
     return true;
 }
 
