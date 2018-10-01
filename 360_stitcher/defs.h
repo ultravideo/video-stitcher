@@ -21,7 +21,7 @@
 
 const std::string base = "videos/";
 const std::string folder = base + "new";
-const int skip_frames = 220;
+const int skip_frames = 135;
 const bool wrapAround = true;
 const bool recalibrate = true;
 const bool enable_local = true;
@@ -42,7 +42,8 @@ const int OUTPUT_HEIGHT = 2048;
 const unsigned int RESULTS_MAX_SIZE = 0;
 //const int offsets[NUM_IMAGES] = {0, 37, 72, 72, 37}; // static
 //const int offsets[NUM_IMAGES] = {43, 153, 151, 131, 95, 0}; // new
-const int offsets[NUM_IMAGES] = { 0 }; // dynamic
+const int offsets[NUM_IMAGES] = { -92+134, 30+134, 28+134, 0+134, 0+134, -134+134 }; // test videos
+//const int offsets[NUM_IMAGES] = { 0 }; // dynamic
 const int RECALIB_DEL = 150;
 const double WORK_MEGAPIX = 0.6;	//0.6;	//-1			// Megapix parameter is scaled to the number
 const double SEAM_MEAGPIX = 0.01;							// of pixels in full image and this is used
