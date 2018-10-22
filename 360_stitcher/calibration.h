@@ -16,7 +16,7 @@ void findFeatures(std::vector<cv::Mat> &full_img, std::vector<cv::detail::ImageF
 
 void matchFeatures(std::vector<cv::detail::ImageFeatures> &features, std::vector<cv::detail::MatchesInfo> &pairwise_matches);
 
-bool calibrateCameras(std::vector<cv::detail::CameraParams> &cameras, float &warped_image_scale,
+bool calibrateCameras(std::vector<cv::detail::CameraParams> &cameras,
                       const cv::Size full_img_size, const double work_scale);
 
 

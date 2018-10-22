@@ -129,7 +129,7 @@ void matchFeatures(vector<ImageFeatures> &features, vector<MatchesInfo> &pairwis
 }
 
 
-bool calibrateCameras(vector<CameraParams> &cameras, float &warped_image_scale, const cv::Size full_img_size,
+bool calibrateCameras(vector<CameraParams> &cameras, const cv::Size full_img_size,
                       const double work_scale) {
     cameras = vector<CameraParams>(NUM_IMAGES);
 	double fov = 90.0*PI/180.0;
@@ -166,9 +166,6 @@ bool calibrateCameras(vector<CameraParams> &cameras, float &warped_image_scale, 
 		cameras[i].focal = focal_tmp * cameras[i].ppx;
 		std::cout << "Focal " << i << ": " << cameras[i].focal << std::endl;
     }
-
-	warped_image_scale = static_cast<float>(cameras[0].focal);
-	std::cout << "Warped image scale: " << warped_image_scale << std::endl;
 
     return true;
 }
@@ -737,9 +734,11 @@ bool stitch_calib(vector<Mat> full_img, vector<CameraParams> &cameras, vector<cu
 	}
 
     // STEP 2: estimating homographies // ---------------------------------------------------------------------------------------
-    if (!calibrateCameras(cameras, warped_image_scale, full_img_size, work_scale)) {
+    if (!calibrateCameras(cameras, full_img_size, work_scale)) {
         return false;
     }
+	warped_image_scale = static_cast<float>(cameras[0].focal);
+	std::cout << "Warped image scale: " << warped_image_scale << std::endl;
 
 
     warpImages(full_img, full_img_size, cameras, blender, compensator,
