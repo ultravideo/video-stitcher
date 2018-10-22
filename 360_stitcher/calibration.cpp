@@ -24,7 +24,7 @@ using std::vector;
  
 
 void findFeatures(vector<Mat> &full_img, vector<ImageFeatures> &features,
-                  double &work_scale, double &seam_scale, double &seam_work_aspect) {
+                  const double &work_scale) {
     Ptr<cuda::ORB> d_orb = cuda::ORB::create(1500, 1.2f, 8);
     Ptr<SurfFeaturesFinderGpu> surf = makePtr<SurfFeaturesFinderGpu>(HESS_THRESH, NOCTAVES, NOCTAVESLAYERS);
     Mat image;
@@ -36,18 +36,12 @@ void findFeatures(vector<Mat> &full_img, vector<ImageFeatures> &features,
         if (WORK_MEGAPIX < 0)
         {
             image = full_img[i];
-            work_scale = 1;
         }
         // Else downscale images to speed up the process
         else
         {
-            work_scale = min(1.0, sqrt(WORK_MEGAPIX * 1e6 / full_img[i].size().area()));
             cv::resize(full_img[i], image, Size(), work_scale, work_scale);
         }
-
-        // Calculate scale for downscaling done in seam finding process
-        seam_scale = min(1.0, sqrt(SEAM_MEAGPIX * 1e6 / full_img[i].size().area()));
-        seam_work_aspect = seam_scale / work_scale;
 
         if (use_surf) {
             // Find features with SURF feature finder
@@ -722,7 +716,23 @@ bool stitch_calib(vector<Mat> full_img, vector<CameraParams> &cameras, vector<cu
     }
     full_img_size = full_img[0].size();
 
-    findFeatures(full_img, features, work_scale, seam_scale, seam_work_aspect);
+	// Negative value means processing images in the original size
+	if (WORK_MEGAPIX < 0)
+	{
+		work_scale = 1;
+	}
+	// Else downscale images to speed up the process
+	else
+	{
+		work_scale = min(1.0, sqrt(WORK_MEGAPIX * 1e6 / full_img_size.area()));
+	}
+	// Calculate scale for downscaling done in seam finding process
+	seam_scale = min(1.0, sqrt(SEAM_MEAGPIX * 1e6 / full_img_size.area()));
+	seam_work_aspect = seam_scale / work_scale;
+
+
+
+    findFeatures(full_img, features, work_scale);
 
     vector<MatchesInfo> pairwise_matches(NUM_IMAGES -1 + (int)wrapAround);
 
@@ -752,13 +762,11 @@ bool stitch_calib(vector<Mat> full_img, vector<CameraParams> &cameras, vector<cu
 
 void recalibrateMesh(std::vector<cv::Mat> &full_img, std::vector<cv::cuda::GpuMat> &x_maps,
                      std::vector<cv::cuda::GpuMat> &y_maps, std::vector<cv::cuda::GpuMat> &x_mesh,
-                     std::vector<cv::cuda::GpuMat> &y_mesh, float focal_length, double compose_scale)
+                     std::vector<cv::cuda::GpuMat> &y_mesh, float focal_length, double compose_scale,
+                     const double &work_scale)
 {
     vector<ImageFeatures> features(NUM_IMAGES);
-    double work_scale;
-    double seam_scale;
-    double seam_work_aspect;
-    findFeatures(full_img, features, work_scale, seam_scale, seam_work_aspect);
+    findFeatures(full_img, features, work_scale);
 
     vector<MatchesInfo> pairwise_matches;
     matchFeatures(features, pairwise_matches);
