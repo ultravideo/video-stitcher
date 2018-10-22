@@ -129,10 +129,9 @@ void matchFeatures(vector<ImageFeatures> &features, vector<MatchesInfo> &pairwis
 }
 
 
-bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pairwise_matches,
-                      vector<CameraParams> &cameras, float &warped_image_scale) {
+bool calibrateCameras(vector<CameraParams> &cameras, float &warped_image_scale, const cv::Size full_img_size,
+                      const double work_scale) {
     cameras = vector<CameraParams>(NUM_IMAGES);
-
 	double fov = 90.0*PI/180.0;
 	double focal_tmp = 1.0/(tan(fov*0.5));
 
@@ -157,8 +156,8 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
 		Mat rotMat = Rz * Ry * Rx; //the order to combine euler angle matrixes to rotation matrix is ZYX!
 
         cameras[i].R = rotMat;
-        cameras[i].ppx = features[i].img_size.width / 2.0; //principal point x
-        cameras[i].ppy = features[i].img_size.height / 2.0; // principal point y
+		cameras[i].ppx = (full_img_size.width * work_scale) / 2.0;
+        cameras[i].ppy = (full_img_size.height * work_scale) / 2.0; // principal point y
 		cameras[i].aspect = 16.0 / 9.0; //as it is known the cameras have 1080p resolution, the aspect ratio is known to be 16:9
 		//in 1080p resolution with medium fov (127 degrees) the focal lengt is 21mm.
 		// with fov 170 degrees the focal lenth is 14mm and with fov 90 degrees the focal length is 28mm 
@@ -705,7 +704,6 @@ bool stitch_calib(vector<Mat> full_img, vector<CameraParams> &cameras, vector<cu
                   float &blend_width, Size &full_img_size)
 {
     // STEP 1: reading images, feature finding and matching // ------------------------------------------------------------------
-    vector<ImageFeatures> features(NUM_IMAGES);
 
     for (int i = 0; i < NUM_IMAGES; ++i) {
         //CAPTURES[i].read(full_img[i]);
@@ -731,15 +729,15 @@ bool stitch_calib(vector<Mat> full_img, vector<CameraParams> &cameras, vector<cu
 	seam_work_aspect = seam_scale / work_scale;
 
 
-
-    findFeatures(full_img, features, work_scale);
-
-    vector<MatchesInfo> pairwise_matches(NUM_IMAGES -1 + (int)wrapAround);
-
-    matchFeatures(features, pairwise_matches);
+	vector<ImageFeatures> features(NUM_IMAGES);
+	vector<MatchesInfo> pairwise_matches(NUM_IMAGES - 1 + (int)wrapAround);
+	if (enable_local) {
+		findFeatures(full_img, features, work_scale);
+		matchFeatures(features, pairwise_matches);
+	}
 
     // STEP 2: estimating homographies // ---------------------------------------------------------------------------------------
-    if (!calibrateCameras(features, pairwise_matches, cameras, warped_image_scale)) {
+    if (!calibrateCameras(cameras, warped_image_scale, full_img_size, work_scale)) {
         return false;
     }
 
