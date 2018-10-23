@@ -12,13 +12,12 @@
 extern void custom_resize(cv::cuda::GpuMat &in, cv::cuda::GpuMat &out, cv::Size t_size);
 
 void findFeatures(std::vector<cv::Mat> &full_img, std::vector<cv::detail::ImageFeatures> &features,
-                  double &work_scale, double &seam_scale, double &seam_work_aspect);
+                  const double &work_scale);
 
 void matchFeatures(std::vector<cv::detail::ImageFeatures> &features, std::vector<cv::detail::MatchesInfo> &pairwise_matches);
 
-bool calibrateCameras(std::vector<cv::detail::ImageFeatures> &features,
-                      std::vector<cv::detail::MatchesInfo> &pairwise_matches,
-                      std::vector<cv::detail::CameraParams> &cameras, float &warped_image_scale);
+bool calibrateCameras(std::vector<cv::detail::CameraParams> &cameras,
+                      const cv::Size full_img_size, const double work_scale);
 
 
 void warpImages(std::vector<cv::Mat> full_img, cv::Size full_img_size,
@@ -45,4 +44,5 @@ bool stitch_calib(std::vector<cv::Mat> full_img, std::vector<cv::detail::CameraP
 
 void recalibrateMesh(std::vector<cv::Mat> &full_img, std::vector<cv::cuda::GpuMat> &x_maps,
                      std::vector<cv::cuda::GpuMat> &y_maps, std::vector<cv::cuda::GpuMat> &x_mesh,
-                     std::vector<cv::cuda::GpuMat> &y_mesh, float focal_length, double compose_scale);
+                     std::vector<cv::cuda::GpuMat> &y_mesh, float focal_length, double compose_scale,
+	                 const double &work_scale);

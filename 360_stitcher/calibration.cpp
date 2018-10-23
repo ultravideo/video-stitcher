@@ -24,7 +24,7 @@ using std::vector;
  
 
 void findFeatures(vector<Mat> &full_img, vector<ImageFeatures> &features,
-                  double &work_scale, double &seam_scale, double &seam_work_aspect) {
+                  const double &work_scale) {
     Ptr<cuda::ORB> d_orb = cuda::ORB::create(1500, 1.2f, 8);
     Ptr<SurfFeaturesFinderGpu> surf = makePtr<SurfFeaturesFinderGpu>(HESS_THRESH, NOCTAVES, NOCTAVESLAYERS);
     Mat image;
@@ -36,18 +36,12 @@ void findFeatures(vector<Mat> &full_img, vector<ImageFeatures> &features,
         if (WORK_MEGAPIX < 0)
         {
             image = full_img[i];
-            work_scale = 1;
         }
         // Else downscale images to speed up the process
         else
         {
-            work_scale = min(1.0, sqrt(WORK_MEGAPIX * 1e6 / full_img[i].size().area()));
             cv::resize(full_img[i], image, Size(), work_scale, work_scale);
         }
-
-        // Calculate scale for downscaling done in seam finding process
-        seam_scale = min(1.0, sqrt(SEAM_MEAGPIX * 1e6 / full_img[i].size().area()));
-        seam_work_aspect = seam_scale / work_scale;
 
         if (use_surf) {
             // Find features with SURF feature finder
@@ -135,10 +129,9 @@ void matchFeatures(vector<ImageFeatures> &features, vector<MatchesInfo> &pairwis
 }
 
 
-bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pairwise_matches,
-                      vector<CameraParams> &cameras, float &warped_image_scale) {
+bool calibrateCameras(vector<CameraParams> &cameras, const cv::Size full_img_size,
+                      const double work_scale) {
     cameras = vector<CameraParams>(NUM_IMAGES);
-
 	double fov = 90.0*PI/180.0;
 	double focal_tmp = 1.0/(tan(fov*0.5));
 
@@ -163,8 +156,8 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
 		Mat rotMat = Rz * Ry * Rx; //the order to combine euler angle matrixes to rotation matrix is ZYX!
 
         cameras[i].R = rotMat;
-        cameras[i].ppx = features[i].img_size.width / 2.0; //principal point x
-        cameras[i].ppy = features[i].img_size.height / 2.0; // principal point y
+		cameras[i].ppx = (full_img_size.width * work_scale) / 2.0;
+        cameras[i].ppy = (full_img_size.height * work_scale) / 2.0; // principal point y
 		cameras[i].aspect = 16.0 / 9.0; //as it is known the cameras have 1080p resolution, the aspect ratio is known to be 16:9
 		//in 1080p resolution with medium fov (127 degrees) the focal lengt is 21mm.
 		// with fov 170 degrees the focal lenth is 14mm and with fov 90 degrees the focal length is 28mm 
@@ -173,9 +166,6 @@ bool calibrateCameras(vector<ImageFeatures> &features, vector<MatchesInfo> &pair
 		cameras[i].focal = focal_tmp * cameras[i].ppx;
 		std::cout << "Focal " << i << ": " << cameras[i].focal << std::endl;
     }
-
-	warped_image_scale = static_cast<float>(cameras[0].focal);
-	std::cout << "Warped image scale: " << warped_image_scale << std::endl;
 
     return true;
 }
@@ -711,7 +701,6 @@ bool stitch_calib(vector<Mat> full_img, vector<CameraParams> &cameras, vector<cu
                   float &blend_width, Size &full_img_size)
 {
     // STEP 1: reading images, feature finding and matching // ------------------------------------------------------------------
-    vector<ImageFeatures> features(NUM_IMAGES);
 
     for (int i = 0; i < NUM_IMAGES; ++i) {
         //CAPTURES[i].read(full_img[i]);
@@ -722,16 +711,34 @@ bool stitch_calib(vector<Mat> full_img, vector<CameraParams> &cameras, vector<cu
     }
     full_img_size = full_img[0].size();
 
-    findFeatures(full_img, features, work_scale, seam_scale, seam_work_aspect);
+	// Negative value means processing images in the original size
+	if (WORK_MEGAPIX < 0)
+	{
+		work_scale = 1;
+	}
+	// Else downscale images to speed up the process
+	else
+	{
+		work_scale = min(1.0, sqrt(WORK_MEGAPIX * 1e6 / full_img_size.area()));
+	}
+	// Calculate scale for downscaling done in seam finding process
+	seam_scale = min(1.0, sqrt(SEAM_MEAGPIX * 1e6 / full_img_size.area()));
+	seam_work_aspect = seam_scale / work_scale;
 
-    vector<MatchesInfo> pairwise_matches(NUM_IMAGES -1 + (int)wrapAround);
 
-    matchFeatures(features, pairwise_matches);
+	vector<ImageFeatures> features(NUM_IMAGES);
+	vector<MatchesInfo> pairwise_matches(NUM_IMAGES - 1 + (int)wrapAround);
+	if (enable_local) {
+		findFeatures(full_img, features, work_scale);
+		matchFeatures(features, pairwise_matches);
+	}
 
     // STEP 2: estimating homographies // ---------------------------------------------------------------------------------------
-    if (!calibrateCameras(features, pairwise_matches, cameras, warped_image_scale)) {
+    if (!calibrateCameras(cameras, full_img_size, work_scale)) {
         return false;
     }
+	warped_image_scale = static_cast<float>(cameras[0].focal);
+	std::cout << "Warped image scale: " << warped_image_scale << std::endl;
 
 
     warpImages(full_img, full_img_size, cameras, blender, compensator,
@@ -752,13 +759,11 @@ bool stitch_calib(vector<Mat> full_img, vector<CameraParams> &cameras, vector<cu
 
 void recalibrateMesh(std::vector<cv::Mat> &full_img, std::vector<cv::cuda::GpuMat> &x_maps,
                      std::vector<cv::cuda::GpuMat> &y_maps, std::vector<cv::cuda::GpuMat> &x_mesh,
-                     std::vector<cv::cuda::GpuMat> &y_mesh, float focal_length, double compose_scale)
+                     std::vector<cv::cuda::GpuMat> &y_mesh, float focal_length, double compose_scale,
+                     const double &work_scale)
 {
     vector<ImageFeatures> features(NUM_IMAGES);
-    double work_scale;
-    double seam_scale;
-    double seam_work_aspect;
-    findFeatures(full_img, features, work_scale, seam_scale, seam_work_aspect);
+    findFeatures(full_img, features, work_scale);
 
     vector<MatchesInfo> pairwise_matches;
     matchFeatures(features, pairwise_matches);
