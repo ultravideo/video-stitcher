@@ -1,14 +1,16 @@
 # Live Stitching
 ## Building
 ### Requirements
-- Custom OpenCV (Included in the directory)
-- Custom OpenCV has some changes in stitching module
-- Eigen
 - CUDA
+- Custom OpenCV (Included in the directory)
+   - Custom OpenCV has some changes in stitching module
+- Eigen
 
 #### CUDA
-- Install CUDA https://docs.nvidia.com/cuda/cuda-installation-guide-microsoft-windows/index.html
-- copy the cuda lib and include folders to $(ProjectDir)
+- Install CUDA
+   - Windows: https://docs.nvidia.com/cuda/cuda-installation-guide-microsoft-windows/index.html
+      - copy the cuda lib and include folders to $(ProjectDir)
+   - Linux: https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html
 
 #### OpenCV
 - Make visual studio project with cmake from $(ProjectDir)/sources to $(ProjectDir)/opencv_build
@@ -16,18 +18,41 @@
 - In visual studio build the project "INSTALL"
 - On linux run following commands starting in base folder
 ```
+sudo apt install libgtk2.0-dev pkg-config ffmpeg libavcodec-dev libavformat-dev libavdevice-dev
 mkdir opencv_build
 cd opencv_build
-cmake -DCMAKE_CXX_COMPILER=g++-7 -DCMAKE_C_COMPILER=gcc-7 -D CMAKE_BUILD_TYPE=RELEASE -D CMAKE_INSTALL_PREFIX=/usr/local -D WITH_CUDA=ON -D ENABLE_FAST_MATH=1 -D CUDA_FAST_MATH=1 -D WITH_CUBLAS=1 -D WITH_PNG=OFF ../sources/
+cmake -DCMAKE_CXX_COMPILER=g++ -DCMAKE_C_COMPILER=gcc -D CMAKE_BUILD_TYPE=RELEASE -D CMAKE_INSTALL_PREFIX=/usr/local -D WITH_CUDA=ON -D ENABLE_FAST_MATH=1 -D CUDA_FAST_MATH=1 -D WITH_CUBLAS=1 -D WITH_PNG=OFF -DBUILD_opencv_cudacodec=OFF ../sources/
 make -j8
 sudo make install
 ```
 
 #### Eigen
-- Download Eigen and copy the Eigen folder to $(ProjectDir)include
-- http://eigen.tuxfamily.org/index.php?title=Main_Page
+- Windows:
+   - Download Eigen and copy the Eigen folder to $(ProjectDir)include
+      - http://eigen.tuxfamily.org/index.php?title=Main_Page
+- Linux:
+   - run following commands in base folder
+```
+git clone https://github.com/eigenteam/eigen-git-mirror
+cp -r eigen-git-mirror/Eigen 360_stitcher
+```
 
 ## Building and running on Linux
+
+After building custom OpenCV and before building 360_stitcher, make symbolic link from CUDA lib directory (most likely /usr/local/cuda/lib64) to /usr:
+
+```
+sudo ln -s /usr/local/cuda/lib64 /usr
+```
+
+If the stitcher complains about not finding shared libraries (f.ex. libopencv_core), run ldconfig
+
+```
+sudo ldconfig
+```
+
+After that the build should work:
+
 ```
 cd 360_stitcher
 make
