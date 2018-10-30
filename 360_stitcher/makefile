@@ -1,5 +1,6 @@
-CC = g++
-CFLAGS = -DLINUX
+CC = gcc
+CXX = g++
+CFLAGS = -O2
 LD_FLAGS = -lcudart \
 	 -lcublas \
 	 -lopencv_core \
@@ -26,18 +27,21 @@ OBJ_DIR=obj
 BUILD_DIR=build
 
 DEPS = calibration.h networking.h defs.h
-OBJ = obj/calibration.o obj/networking.o obj/resize.o obj/timed.o
+OBJ = obj/calibration.o obj/networking.o obj/resize.o obj/timed.o obj/netlib.o
 
 $(OBJ_DIR)/%.o: %.cpp $(DEPS) | obj
-	$(CC) -c -o $@ $< $(CFLAGS) -pthread
+	$(CXX) -c -o $@ $< $(CFLAGS) -pthread
 
 stitcher: $(OBJ)
-	$(CC) -o $(BUILD_DIR)/$@ $^ $(LD_FLAGS) -pthread
+	$(CXX) -o $(BUILD_DIR)/$@ $^ $(LD_FLAGS) -pthread
 
 $(OBJ_DIR)/resize.o: resize.cu
 	nvcc -std=c++11 -c -o $@ $< $(CFLAGS)
 
 $(OBJ_DIR)/timed.o: timed.cpp
+	$(CXX) -c -o $@ $< $(CFLAGS)
+
+$(OBJ_DIR)/netlib.o: netlib.c
 	$(CC) -c -o $@ $< $(CFLAGS)
 
 obj:
