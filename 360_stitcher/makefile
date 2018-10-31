@@ -26,8 +26,8 @@ LD_FLAGS = -lcudart \
 OBJ_DIR=obj
 BUILD_DIR=build
 
-DEPS = calibration.h networking.h defs.h
-OBJ = obj/calibration.o obj/networking.o obj/resize.o obj/timed.o obj/netlib.o
+DEPS = calibration.h networking.h defs.h debug.h
+OBJ = obj/calibration.o obj/networking.o obj/resize.o obj/timed.o obj/netlib.o obj/debug.o
 
 $(OBJ_DIR)/%.o: %.cpp $(DEPS) | obj
 	$(CXX) -c -o $@ $< $(CFLAGS) -pthread
