@@ -6,11 +6,6 @@
 #include <limits>
 #include <iostream>
 #include <string>
-#ifndef LINUX
-#include <WinSock2.h>
-#include <Windows.h>
-#include <WS2tcpip.h>
-#endif
 
 #include "opencv2/opencv_modules.hpp"
 #include <opencv2/core/utility.hpp>
@@ -37,6 +32,7 @@
 #include "Eigen/SparseCholesky"
 
 #include "networking.h" 
+#include "netlib.h"
 #include "blockingqueue.h"
 #include "calibration.h"
 
@@ -163,64 +159,22 @@ void consume(BlockingQueue<cuda::GpuMat> &results) {
 	}
 	int frame_counter = 0;
 
-
 	int iSendResult;
-#ifndef LINUX
-	SOCKET ConnectSocket = INVALID_SOCKET;
+	sts_net_socket_t socket;
 
 	if (send_results) {
-		struct addrinfo *result = NULL;
-		struct addrinfo hints;
-		WSADATA wsaData;
-		int iResult;
+		sts_net_init();
 
-
-		// Initialize Winsock
-		iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
-		if (iResult != 0) {
-			printf("WSAStartup failed with error: %d\n", iResult);
-			return;
+		if (sts_net_open_socket(&socket, PLAYER_ADDRESS, PLAYER_TCP_PORT) < 0) {
+            fprintf(stderr, "failed to open client socket, reason: %s\n", sts_net_get_last_error());
+            exit(EXIT_FAILURE);
 		}
 
-		ZeroMemory(&hints, sizeof(hints));
-		hints.ai_family = AF_INET;
-		hints.ai_socktype = SOCK_STREAM;
-		hints.ai_protocol = IPPROTO_TCP;
-		//hints.ai_flags = AI_PASSIVE;
-
-		// Resolve the server address and port
-		iResult = getaddrinfo(PLAYER_ADDRESS, PLAYER_TCP_PORT, &hints, &result);
-		if (iResult != 0) {
-			printf("getaddrinfo failed with error: %d\n", iResult);
-			WSACleanup();
-			return;
-		}
-
-		// Create a SOCKET for connecting to server
-		ConnectSocket = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
-		if (ConnectSocket == INVALID_SOCKET) {
-			printf("socket failed with error: %ld\n", WSAGetLastError());
-			freeaddrinfo(result);
-			WSACleanup();
-			return;
-		}
-
-		// Setup the TCP listening socket
-		iResult = connect(ConnectSocket, result->ai_addr, (int)result->ai_addrlen);
-		if (iResult == SOCKET_ERROR) {
-			printf("connect failed with error: %d\n", WSAGetLastError());
-			freeaddrinfo(result);
-			closesocket(ConnectSocket);
-			WSACleanup();
-			return;
-		}
-
-		freeaddrinfo(result);
-		LOGLN("Connected to player");
+        LOGLN("Connected to player");
 	}
-#endif
+
 	Size resize_dst_size;
-	uchar* row_ptr = final_result.ptr(0);
+	uchar *row_ptr = final_result.ptr(0);
 	std::chrono::high_resolution_clock::time_point tp = std::chrono::high_resolution_clock::now();
 	std::chrono::high_resolution_clock::time_point tp2;
 
@@ -268,35 +222,31 @@ void consume(BlockingQueue<cuda::GpuMat> &results) {
 		}
 		if (first_frame) {
 			total_bytes = final_result.u->size;
-#ifndef LINUX
 			if (send_results && send_height_info) {
-				//Tell the image height to the player. This has to be done, because the height can vary between different runs. The player
-				//needs this information to place the image correctly on the sphere.
+				//Tell the image height to the player. This has to be done, because the height can vary between different runs.
+                //The player needs this information to place the image correctly on the sphere.
 				int result_height = final_result.rows;
-				iSendResult = send(ConnectSocket, (char*)&result_height, sizeof(int), NULL);
-				if (iSendResult == SOCKET_ERROR) {
-					printf("sending image height failed with error: %d\n", WSAGetLastError());
-					closesocket(ConnectSocket);
-					WSACleanup();
-					return;
-				}
+
+                if (sts_net_send(&socket, (char *)&result_height, sizeof(int)) <= 0) {
+                    fprintf(stderr, "sending image height failed with error: %s\n", sts_net_get_last_error());
+                    sts_net_close_socket(&socket);
+                    sts_net_shutdown();
+                    exit(EXIT_FAILURE);
+                }
 			}
-#endif
 		}
 		if (send_results) {
-#ifndef LINUX
-			do {
-				iSendResult = send(ConnectSocket, (char*)final_result.data + sent_bytes, total_bytes - sent_bytes, NULL);
-				if (iSendResult == SOCKET_ERROR) {
-					printf("send failed with error: %d\n", WSAGetLastError());
-					closesocket(ConnectSocket);
-					WSACleanup();
-					return;
+            sent_bytes  = 0;
+            do {
+                iSendResult = sts_net_send(&socket, (char *)final_result.data + sent_bytes, total_bytes - sent_bytes);
+				if (iSendResult < 0) {
+					fprintf(stderr, "sending data failed with error: %s\n", sts_net_get_last_error());
+                    sts_net_close_socket(&socket);
+                    sts_net_shutdown();
+                    exit(EXIT_FAILURE);
 				}
 				sent_bytes += iSendResult;
 			} while (sent_bytes != total_bytes);
-			sent_bytes = 0;
-#endif
 		}
 		if (save_video) {
 			outVideo << final_result;
@@ -310,6 +260,7 @@ void consume(BlockingQueue<cuda::GpuMat> &results) {
 			imshow("Video", final_result);
 			waitKey(1);
 		}
+
 		++frame_counter;
 		if (frame_counter == 30) {
 			tp2 = std::chrono::high_resolution_clock::now();
@@ -353,17 +304,17 @@ int main(int argc, char* argv[])
 {
 	vector<BlockingQueue<Mat>> que(NUM_IMAGES);
 	std::vector<VideoCapture> CAPTURES;
+
 	if (use_stream) {
 		if (startPolling(que)) {
 			return -1;
 		}
 	}
+
 	if (debug_stream) {
 		while (1) {
 			for (int i = 0; i < NUM_IMAGES; ++i) {
 				if (!que[i].empty()) {
-					//Mat mat = que[i].pop();
-					//std::cout << "Frame" << std::endl;
 					if (show_out) {
 						imshow(std::to_string(i), que[i].pop());
 						waitKey(1);
@@ -385,7 +336,6 @@ int main(int argc, char* argv[])
 	// Videofeed input
 	if (!use_stream) {
 		for (int i = 0; i < NUM_IMAGES; ++i) {
-			std::cout << video_files[i] << std::endl;
 			CAPTURES.push_back(VideoCapture(video_files[i]));
 			if (!CAPTURES[i].isOpened()) {
 				LOGLN("ERROR: Unable to open videofile(s).");
