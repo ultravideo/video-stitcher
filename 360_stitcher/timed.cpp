@@ -6,9 +6,11 @@
 #include <limits>
 #include <iostream>
 #include <string>
+#ifndef LINUX
 #include <WinSock2.h>
 #include <Windows.h>
 #include <WS2tcpip.h>
+#endif
 
 #include "opencv2/opencv_modules.hpp"
 #include <opencv2/core/utility.hpp>
@@ -31,8 +33,8 @@
 #include "opencv2/cudafeatures2d.hpp"
 #include "opencv2/calib3d.hpp"
 
-#include <Eigen/IterativeLinearSolvers>
-#include <Eigen/SparseCholesky>
+#include "Eigen/IterativeLinearSolvers"
+#include "Eigen/SparseCholesky"
 
 #include "networking.h" 
 #include "blockingqueue.h"
@@ -163,6 +165,7 @@ void consume(BlockingQueue<cuda::GpuMat> &results) {
 
 
 	int iSendResult;
+#ifndef LINUX
 	SOCKET ConnectSocket = INVALID_SOCKET;
 
 	if (send_results) {
@@ -215,6 +218,7 @@ void consume(BlockingQueue<cuda::GpuMat> &results) {
 		freeaddrinfo(result);
 		LOGLN("Connected to player");
 	}
+#endif
 	Size resize_dst_size;
 	uchar* row_ptr = final_result.ptr(0);
 	std::chrono::high_resolution_clock::time_point tp = std::chrono::high_resolution_clock::now();
@@ -264,6 +268,7 @@ void consume(BlockingQueue<cuda::GpuMat> &results) {
 		}
 		if (first_frame) {
 			total_bytes = final_result.u->size;
+#ifndef LINUX
 			if (send_results && send_height_info) {
 				//Tell the image height to the player. This has to be done, because the height can vary between different runs. The player
 				//needs this information to place the image correctly on the sphere.
@@ -276,8 +281,10 @@ void consume(BlockingQueue<cuda::GpuMat> &results) {
 					return;
 				}
 			}
+#endif
 		}
 		if (send_results) {
+#ifndef LINUX
 			do {
 				iSendResult = send(ConnectSocket, (char*)final_result.data + sent_bytes, total_bytes - sent_bytes, NULL);
 				if (iSendResult == SOCKET_ERROR) {
@@ -289,6 +296,7 @@ void consume(BlockingQueue<cuda::GpuMat> &results) {
 				sent_bytes += iSendResult;
 			} while (sent_bytes != total_bytes);
 			sent_bytes = 0;
+#endif
 		}
 		if (save_video) {
 			outVideo << final_result;

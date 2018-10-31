@@ -30,9 +30,9 @@ void pollClients(int ListenSocket, struct sockaddr_in &cli_addr, std::vector<Blo
 int startPolling(std::vector<BlockingQueue<cv::Mat>> &queues)
 {
 #ifdef LINUX
-    int sockfd, newsockfd, portno = std::stoi(DEFAULT_PORT);
+    int sockfd, newsockfd, portno = std::stoi(CAPTURE_TCP_PORT);
     socklen_t clilen;
-    char buffer[DEFAULT_BUFLEN];
+    /* char buffer[DEFAULT_BUFLEN]; */
     struct sockaddr_in serv_addr, cli_addr;
     int n;
 
@@ -126,14 +126,14 @@ int startPolling(std::vector<BlockingQueue<cv::Mat>> &queues)
 #ifdef LINUX
 void pollFrames(int ConnectSocket, BlockingQueue<cv::Mat> &queue)
 {
-	int max_idx = IMG_HEIGHT * IMG_WIDTH * CHANNELS;
+	int max_idx = CAPTURE_IMG_HEIGHT * CAPTURE_IMG_WIDTH * CAPTURE_IMG_CHANNELS;
 	int iResult;
-	const int recvbuflen = DEFAULT_BUFLEN;
+	const int recvbuflen = 128;
 	char recvbuf[recvbuflen];
 	int copy_length;
 	int overflow;
 
-	cv::Mat mat(cv::Size(IMG_WIDTH, IMG_HEIGHT), CV_MAKETYPE(CV_8U, CHANNELS));
+	cv::Mat mat(cv::Size(CAPTURE_IMG_WIDTH, CAPTURE_IMG_HEIGHT), CV_MAKETYPE(CV_8U, CAPTURE_IMG_CHANNELS));
 	int index = 0;
 	// Receive until the peer closes the connection
 	do {
@@ -153,12 +153,12 @@ void pollFrames(int ConnectSocket, BlockingQueue<cv::Mat> &queue)
 			printf("recv failed\n");
 		}
 
-		if (index >= IMG_WIDTH * IMG_HEIGHT * CHANNELS) {
+		if (index >= CAPTURE_IMG_WIDTH * CAPTURE_IMG_HEIGHT * CAPTURE_IMG_CHANNELS) {
 			index = 0;
 			cv::cvtColor(mat, mat, CV_YUV2BGR_NV12);
 			queue.push(mat);
 
-			mat = cv::Mat(cv::Size(IMG_WIDTH, IMG_HEIGHT), CV_MAKETYPE(CV_8U, CHANNELS));
+			mat = cv::Mat(cv::Size(CAPTURE_IMG_WIDTH, CAPTURE_IMG_HEIGHT), CV_MAKETYPE(CV_8U, CAPTURE_IMG_CHANNELS));
 			overflow = iResult - copy_length;
 			if (overflow) {
 				memcpy(mat.data, recvbuf + copy_length, overflow);

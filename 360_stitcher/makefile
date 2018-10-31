@@ -1,8 +1,8 @@
-INCLUDES=-I./include -I../opencv_build/include -I.
-LIBS=-L./lib64 -L../opencv_build/lib \
-     -lcudart \
-     -lcublas \
-     -lopencv_core \
+CC = g++
+CFLAGS = -DLINUX
+LD_FLAGS = -lcudart \
+	 -lcublas \
+	 -lopencv_core \
      -lopencv_cudaarithm \
      -lopencv_cudafeatures2d \
      -lopencv_cudaimgproc \
@@ -20,34 +20,30 @@ LIBS=-L./lib64 -L../opencv_build/lib \
      -lopencv_videoio \
      -lopencv_video \
      -lopencv_videostab \
-     -lopencv_xfeatures2d \
+     -lopencv_xfeatures2d
 
-CC=g++-7
-CFLAGS= $(INCLUDES) $(LIBS)
-
-ODIR=obj
+OBJ_DIR=obj
 BUILD_DIR=build
 
-
 DEPS = calibration.h networking.h defs.h
-
-_OBJ = calibration.o networking.o resize.o timed.o
 OBJ = obj/calibration.o obj/networking.o obj/resize.o obj/timed.o
-#OBJ = $(patsubst %,$(ODIR)/%,$(_OBJ))
 
-$(ODIR)/%.o: %.cpp $(DEPS)
+$(OBJ_DIR)/%.o: %.cpp $(DEPS) | obj
 	$(CC) -c -o $@ $< $(CFLAGS) -pthread
 
 stitcher: $(OBJ)
-	$(CC) -o $(BUILD_DIR)/$@ $^ $(CFLAGS) -pthread
+	$(CC) -o $(BUILD_DIR)/$@ $^ $(LD_FLAGS) -pthread
 
-$(ODIR)/resize.o: resize.cu
+$(OBJ_DIR)/resize.o: resize.cu
 	nvcc -std=c++11 -c -o $@ $< $(CFLAGS)
 
-$(ODIR)/timed.o: timed.cpp
+$(OBJ_DIR)/timed.o: timed.cpp
 	$(CC) -c -o $@ $< $(CFLAGS)
 
-clean:
-	rm -f $(ODIR)/*.o *~ core $(INCDIR)/*~
-.PHONY: clean
+obj:
+	@mkdir $(OBJ_DIR) $(BUILD_DIR)
 
+clean:
+	rm -rf $(OBJ_DIR) $(BUILD_DIR)
+
+.PHONY: clean
