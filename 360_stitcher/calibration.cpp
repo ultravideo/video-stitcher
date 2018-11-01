@@ -381,8 +381,13 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features,
     int num_rows = 2 * static_cast<int>(images.size())*N*M + 2* static_cast<int>(images.size())*(N-1)*(M-1) +
                    2 * (NUM_IMAGES + (int)wrapAround) * features_per_image;
     Eigen::SparseMatrix<double> A(num_rows, 2*N*M*images.size());
-    Eigen::VectorXd b(num_rows), x;
+    Eigen::VectorXd b(num_rows);
+    Eigen::VectorXd x;
     b.fill(0);
+
+    int global_start = 0;
+    int smooth_start = 2 * static_cast<int>(images.size())*N*M;
+    int local_start = 2 * static_cast<int>(images.size())*N*M + 2* static_cast<int>(images.size())*(N-1)*(M-1);
 
     // Global alignment term from http://web.cecs.pdx.edu/~fliu/papers/cvpr2014-stitching.pdf
     float a = ALPHAS[1];
@@ -401,8 +406,8 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features,
                         break;
                     }
                 }
-                A.insert(2*(j + i*M + idx*M*N), 2*(j + i*M + idx*M*N)) = a * tau;
-                A.insert(2*(j + i*M + idx*M*N) + 1, 2*(j + i*M + idx*M*N)+1) = a * tau;
+                A.insert(row, 2*(j + i*M + idx*M*N)) = a * tau;
+                A.insert(row + 1, 2*(j + i*M + idx*M*N)+1) = a * tau;
                 b(2*(j + i*M + idx*M*N)) = a * tau * x1;
                 b(2*(j + i*M + idx*M*N)+1) = a * tau * y1;
                 row += 2;
@@ -410,6 +415,7 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features,
         }
     }
 
+    row = 0;
     // Smoothness term from http://web.cecs.pdx.edu/~fliu/papers/cvpr2014-stitching.pdf
     a = ALPHAS[2];
     for (int idx = 0; idx < images.size(); ++idx) {
@@ -440,24 +446,24 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features,
                 fillConvexPoly(mask, pts, 3, Scalar(1));
                 sal = 0.5f + norm(images[idx], NORM_L2, mask) / (255*255);
                 
-                A.insert(row,   2*(j + M * i + M*N*idx)) = a * sal; // x1
-                A.insert(row,   2*(j + M * i + M*N*idx) + 1) = a * sal; // y1
-                A.insert(row,   2*(j + M * (i+1) + M*N*idx)) = a*(u + v - 1) * sal; // x2
-                A.insert(row,   2*(j + M * (i+1) + M*N*idx) + 1) = a*(u - v - 1) * sal; // y2
-                A.insert(row,   2*(j+1 + M * i + M*N*idx)) = a*(-u - v) * sal; // x3
-                A.insert(row,   2*(j+1 + M * i + M*N*idx) + 1) = a*(-u + v) * sal; // y3
+                A.insert(smooth_start + row,   2*(j + M * i + M*N*idx)) = a * sal; // x1
+                A.insert(smooth_start + row,   2*(j + M * i + M*N*idx) + 1) = a * sal; // y1
+                A.insert(smooth_start + row,   2*(j + M * (i+1) + M*N*idx)) = a*(u + v - 1) * sal; // x2
+                A.insert(smooth_start + row,   2*(j + M * (i+1) + M*N*idx) + 1) = a*(u - v - 1) * sal; // y2
+                A.insert(smooth_start + row,   2*(j+1 + M * i + M*N*idx)) = a*(-u - v) * sal; // x3
+                A.insert(smooth_start + row,   2*(j+1 + M * i + M*N*idx) + 1) = a*(-u + v) * sal; // y3
 
                 mask.setTo(Scalar::all(0));
                 Point pts2[3] = { Point(x2, y1), Point(x1, y2), Point(y2, x2) };
                 fillConvexPoly(mask, pts2, 3, Scalar(1));
                 sal = 0.5f + norm(images[idx], NORM_L2, mask) / (255*255);
 
-                A.insert(row+1, 2*(j + M * (i+1) + M*N*idx)) = a * sal; // x2
-                A.insert(row+1, 2*(j + M * (i+1) + M*N*idx) + 1) = a * sal; // y2
-                A.insert(row+1, 2*(j+1 + M * i + M*N*idx)) = a*(u + v - 1) * sal; // x3
-                A.insert(row+1, 2*(j+1 + M * i + M*N*idx) + 1) = a*(u - v - 1) * sal; // y3
-                A.insert(row+1, 2*(j+1 + M * (i+1) + M*N*idx)) = a*(-u - v) * sal; // x4
-                A.insert(row+1, 2*(j+1 + M * (i+1) + M*N*idx) + 1) = a*(-u + v) * sal; // x4
+                A.insert(smooth_start + row+1, 2*(j + M * (i+1) + M*N*idx)) = a * sal; // x2
+                A.insert(smooth_start + row+1, 2*(j + M * (i+1) + M*N*idx) + 1) = a * sal; // y2
+                A.insert(smooth_start + row+1, 2*(j+1 + M * i + M*N*idx)) = a*(u + v - 1) * sal; // x3
+                A.insert(smooth_start + row+1, 2*(j+1 + M * i + M*N*idx) + 1) = a*(u - v - 1) * sal; // y3
+                A.insert(smooth_start + row+1, 2*(j+1 + M * (i+1) + M*N*idx)) = a*(-u - v) * sal; // x4
+                A.insert(smooth_start + row+1, 2*(j+1 + M * (i+1) + M*N*idx) + 1) = a*(-u + v) * sal; // x4
                 row += 2;
             }
         }
@@ -483,6 +489,7 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features,
     }
 
     // Local alignment term from http://web.cecs.pdx.edu/~fliu/papers/cvpr2014-stitching.pdf
+    row = 0;
     float f = focal_length;
     a = ALPHAS[0];
 	vector<int> valid_indexes_orig;
@@ -589,26 +596,26 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features,
                 float v2 = (y2_ - top2) / (bot2 - top2);
 
                 // _x_ - _x2_ = theta * f * scale
-                A.insert(row,  2*(l1   + M * (t1)   + M*N*src)) = (1-u1)*(1-v1) * a;
-                A.insert(row,  2*(l1+1 + M * (t1)   + M*N*src)) = u1*(1-v1) * a;
-                A.insert(row,  2*(l1 +   M * (t1+1) + M*N*src)) = v1*(1-u1) * a;
-                A.insert(row,  2*(l1+1 + M * (t1+1) + M*N*src)) = u1*v1 * a;
-                A.insert(row,  2*(l2   + M * (t2)   + M*N*dst)) = -(1-u2)*(1-v2) * a;
-                A.insert(row,  2*(l2+1 + M * (t2)   + M*N*dst)) = -u2*(1-v2) * a;
-                A.insert(row,  2*(l2 +   M * (t2+1) + M*N*dst)) = -v2*(1-u2) * a;
-                A.insert(row,  2*(l2+1 + M * (t2+1) + M*N*dst)) = -u2*v2 * a;
+                A.insert(local_start + row,  2*(l1   + M * (t1)   + M*N*src)) = (1-u1)*(1-v1) * a;
+                A.insert(local_start + row,  2*(l1+1 + M * (t1)   + M*N*src)) = u1*(1-v1) * a;
+                A.insert(local_start + row,  2*(l1 +   M * (t1+1) + M*N*src)) = v1*(1-u1) * a;
+                A.insert(local_start + row,  2*(l1+1 + M * (t1+1) + M*N*src)) = u1*v1 * a;
+                A.insert(local_start + row,  2*(l2   + M * (t2)   + M*N*dst)) = -(1-u2)*(1-v2) * a;
+                A.insert(local_start + row,  2*(l2+1 + M * (t2)   + M*N*dst)) = -u2*(1-v2) * a;
+                A.insert(local_start + row,  2*(l2 +   M * (t2+1) + M*N*dst)) = -v2*(1-u2) * a;
+                A.insert(local_start + row,  2*(l2+1 + M * (t2+1) + M*N*dst)) = -u2*v2 * a;
 
-                b(row) = theta * f * scale * a;
+                b(local_start + row) = theta * f * scale * a;
 
                 // _y_ - _y2_ = 0
-                A.insert(row+1, 2*(l1   + M * (t1)   + M*N*src)+1) = (1-u1)*(1-v1) * a;
-                A.insert(row+1, 2*(l1+1 + M * (t1)   + M*N*src)+1) = u1*(1-v1) * a;
-                A.insert(row+1, 2*(l1 +   M * (t1+1) + M*N*src)+1) = v1*(1-u1) * a;
-                A.insert(row+1, 2*(l1+1 + M * (t1+1) + M*N*src)+1) = u1*v1 * a;
-                A.insert(row+1, 2*(l2   + M * (t2)   + M*N*dst)+1) = -(1-u2)*(1-v2) * a;
-                A.insert(row+1, 2*(l2+1 + M * (t2)   + M*N*dst)+1) = -u2*(1-v2) * a;
-                A.insert(row+1, 2*(l2 +   M * (t2+1) + M*N*dst)+1) = -v2*(1-u2) * a;
-                A.insert(row+1, 2*(l2+1 + M * (t2+1) + M*N*dst)+1) = -u2*v2 * a;
+                A.insert(local_start + row+1, 2*(l1   + M * (t1)   + M*N*src)+1) = (1-u1)*(1-v1) * a;
+                A.insert(local_start + row+1, 2*(l1+1 + M * (t1)   + M*N*src)+1) = u1*(1-v1) * a;
+                A.insert(local_start + row+1, 2*(l1 +   M * (t1+1) + M*N*src)+1) = v1*(1-u1) * a;
+                A.insert(local_start + row+1, 2*(l1+1 + M * (t1+1) + M*N*src)+1) = u1*v1 * a;
+                A.insert(local_start + row+1, 2*(l2   + M * (t2)   + M*N*dst)+1) = -(1-u2)*(1-v2) * a;
+                A.insert(local_start + row+1, 2*(l2+1 + M * (t2)   + M*N*dst)+1) = -u2*(1-v2) * a;
+                A.insert(local_start + row+1, 2*(l2 +   M * (t2+1) + M*N*dst)+1) = -v2*(1-u2) * a;
+                A.insert(local_start + row+1, 2*(l2+1 + M * (t2+1) + M*N*dst)+1) = -u2*v2 * a;
                 row+=2;
                 break;
             }
