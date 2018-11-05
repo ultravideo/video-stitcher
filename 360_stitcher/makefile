@@ -1,6 +1,6 @@
 CC = gcc
 CXX = g++
-CFLAGS = -O2
+CFLAGS = -O3 -g
 LD_FLAGS = -lcudart \
 	 -lcublas \
 	 -lopencv_core \
@@ -21,7 +21,8 @@ LD_FLAGS = -lcudart \
      -lopencv_videoio \
      -lopencv_video \
      -lopencv_videostab \
-     -lopencv_xfeatures2d
+     -lopencv_xfeatures2d \
+     -lkvazaar
 
 OBJ_DIR=obj
 BUILD_DIR=build
