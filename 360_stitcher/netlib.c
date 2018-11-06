@@ -1,5 +1,4 @@
 #include "netlib.h"
-#include <stdio.h>
 
 static int sts_net__set_error(const char *message)
 {
@@ -74,7 +73,6 @@ int sts_net_open_socket(sts_net_socket_t *sock, const char *host, const char *se
 		}
 
 		freeaddrinfo(res);
-        fprintf(stderr, "%d\n", fd);
 		if (!r)
 			return sts_net__set_error("Cannot connect to host");
 

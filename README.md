@@ -5,6 +5,7 @@
 - Custom OpenCV (Included in the directory)
    - Custom OpenCV has some changes in stitching module
 - Eigen
+- Kvazaar
 
 #### CUDA
 - Install CUDA
@@ -36,6 +37,9 @@ sudo make install
 git clone https://github.com/eigenteam/eigen-git-mirror
 cp -r eigen-git-mirror/Eigen 360_stitcher
 ```
+
+#### Kvazaar
+https://gitlab.tut.fi/TIE/ultravideo/kvazaar#compiling-kvazaar
 
 ## Building and running on Linux
 

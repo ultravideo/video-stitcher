@@ -6,6 +6,7 @@
 #include <limits>
 #include <iostream>
 #include <string>
+#include <kvazaar.h>
 
 #include "opencv2/opencv_modules.hpp"
 #include <opencv2/core/utility.hpp>
@@ -41,7 +42,6 @@ const int TIMES = 5;
 std::chrono::high_resolution_clock::time_point times[TIMES];
 
 using std::vector;
-
 using namespace cv;
 using namespace cv::detail;
 
@@ -114,34 +114,37 @@ void stitch_online(double compose_scale, Mat &img, cuda::GpuMat &x_map, cuda::Gp
 	}
 }
 
-void stitch_one(double compose_scale, vector<Mat> &imgs, vector<cuda::GpuMat> &x_maps, vector<cuda::GpuMat> &y_maps, vector<cuda::GpuMat> &x_mesh, vector<cuda::GpuMat> &y_mesh,
-	MultiBandBlender* mb, GainCompensator* gc, BlockingQueue<cuda::GpuMat> &results) {
+void stitch_one(double compose_scale, vector<Mat> &imgs, vector<cuda::GpuMat> &x_maps,
+               vector<cuda::GpuMat> &y_maps, vector<cuda::GpuMat> &x_mesh, vector<cuda::GpuMat> &y_mesh,
+	           MultiBandBlender* mb, GainCompensator* gc, BlockingQueue<cuda::GpuMat> &results)
+{
 	for (int i = 0; i < NUM_IMAGES; ++i) {
-		stitch_online(compose_scale, std::ref(imgs[i]), std::ref(x_maps[i]), std::ref(y_maps[i]), std::ref(x_mesh[i]), std::ref(y_mesh[i]), mb, gc, i);
+		stitch_online(compose_scale, std::ref(imgs[i]), std::ref(x_maps[i]), std::ref(y_maps[i]),
+                      std::ref(x_mesh[i]), std::ref(y_mesh[i]), mb, gc, i);
 	}
-	//LOGLN("Frame:::::");
-	//for (int i = 0; i < TIMES-1; ++i) {
-	//	LOGLN("delta time: " << std::chrono::duration_cast<std::chrono::milliseconds>(times[i+1] - times[i]).count());
-	//}
+
 	Mat result;
 	Mat result_mask;
 	cuda::GpuMat out;
 	times[0] = std::chrono::high_resolution_clock::now();
 	mb->blend(result, result_mask, out, true);
 	times[1] = std::chrono::high_resolution_clock::now();
-	//LOGLN("delta time: " << std::chrono::duration_cast<std::chrono::milliseconds>(times[1] - times[0]).count());
+
 	if (clear_buffers) {
 		while (!results.empty()) {
 			results.pop();
 		}
 	}
-	// Don't push to results if there are enough frames already. This is to prevent memory overflow, if the frames are not consumed fast enough. Max size 0 means no limit.
+
+	// Don't push to results if there are enough frames already. This is to prevent memory overflow,
+    // if the frames are not consumed fast enough. Max size 0 means no limit.
 	if (RESULTS_MAX_SIZE == 0 || results.size() < RESULTS_MAX_SIZE) {
 		results.push(out);
 	}
 }
 
-void consume(BlockingQueue<cuda::GpuMat> &results) {
+void consume(BlockingQueue<cuda::GpuMat> &results)
+{
 	cuda::GpuMat mat;
 	cuda::GpuMat mat_8u;
 	bool first_frame = true;
@@ -149,47 +152,82 @@ void consume(BlockingQueue<cuda::GpuMat> &results) {
 	Mat original_8u;
 	Mat resized_bgr;
 	Mat resized_rgb;
+
 	//Initialize final_result as a black image
 	Mat final_result = Mat(Size(OUTPUT_WIDTH, OUTPUT_HEIGHT), CV_8UC3, cv::Scalar(0));
 	if (save_video) {
 		outVideo.open("stitched.avi", VideoWriter::fourcc('M', 'J', 'P', 'G'), 30, Size(1920, 1080));
 		if (!outVideo.isOpened()) {
-			return;
+            return;
 		}
 	}
 	int frame_counter = 0;
 
 	int iSendResult;
 	sts_net_socket_t socket;
+    unsigned char *send_buf = NULL;
+
+    const kvz_api *api = kvz_api_get(8);
+    kvz_config *config = NULL;
+    kvz_encoder *enc   = NULL;
+    kvz_picture *pic   = NULL;
 
 	if (send_results) {
 		sts_net_init();
 
 		if (sts_net_open_socket(&socket, PLAYER_ADDRESS, PLAYER_TCP_PORT) < 0) {
-            fprintf(stderr, "failed to open client socket, reason: %s\n", sts_net_get_last_error());
+            fprintf(stderr, "failed to open client socket: %s\n", sts_net_get_last_error());
             exit(EXIT_FAILURE);
 		}
-
         LOGLN("Connected to player");
+
+        if ((config = api->config_alloc()) == NULL) {
+            LOGLN("ERROR: failed to allocate config");
+            exit(EXIT_FAILURE);
+        }
+        api->config_init(config);
+
+        config->width = OUTPUT_WIDTH;
+        config->height = OUTPUT_HEIGHT;
+        config->threads = 16;
+
+        if ((enc = api->encoder_open(config)) == NULL) {
+            LOGLN("ERROR: failed to open encoder");
+            exit(EXIT_FAILURE);
+        }
+
+        if ((pic = api->picture_alloc(config->width, config->height)) == NULL) {
+            LOGLN("ERROR: failed to allocate picture");
+            exit(EXIT_FAILURE);
+        }
+        pic->pts = 0;
+
+        send_buf = new unsigned char[1024 * 1024];
 	}
 
 	Size resize_dst_size;
 	uchar *row_ptr = final_result.ptr(0);
 	std::chrono::high_resolution_clock::time_point tp = std::chrono::high_resolution_clock::now();
 	std::chrono::high_resolution_clock::time_point tp2;
+    int64_t num_frames, max;
 
 	int sent_bytes = 0;
 	int total_bytes = 0;
+
+	std::chrono::high_resolution_clock::time_point start = std::chrono::high_resolution_clock::now();
+
 	while (1) {
 		mat = results.pop();
 		if (mat.empty()) {
 			if (save_video) {
 				outVideo.release();
 			}
-			return;
+            break;
 		}
+
 		mat.convertTo(mat_8u, CV_8U);
 		mat_8u.download(original_8u);
+
 		if (first_frame) {
 			imwrite("calib.jpg", original_8u);
 			int image_height;
@@ -201,6 +239,8 @@ void consume(BlockingQueue<cuda::GpuMat> &results) {
 				if (image_height > OUTPUT_HEIGHT) {
 					image_height = OUTPUT_HEIGHT;
 				}
+
+                fprintf(stderr, "image height %d\n", image_height);
 			}
 			else {
 				image_height = OUTPUT_HEIGHT;
@@ -208,18 +248,20 @@ void consume(BlockingQueue<cuda::GpuMat> &results) {
 			resize_dst_size = Size(OUTPUT_WIDTH, image_height);
 
 		}
+
 		resize(original_8u, resized_bgr, resize_dst_size, 0, 0, INTER_LINEAR);
 		if (keep_aspect_ratio && add_black_bars) {
 			cvtColor(resized_bgr, resized_rgb, COLOR_BGR2RGB);
+
 			// To add black bars, the stitched image is copied to the middle of a black image
 			if (first_frame) {
 				row_ptr = final_result.ptr(final_result.rows / 2 - resized_rgb.rows / 2);
 			}
 			memcpy(row_ptr, resized_rgb.data, resized_rgb.u->size);
-		}
-		else {
+		} else {
 			cvtColor(resized_bgr, final_result, COLOR_BGR2RGB);
 		}
+
 		if (first_frame) {
 			total_bytes = final_result.u->size;
 			if (send_results && send_height_info) {
@@ -235,27 +277,53 @@ void consume(BlockingQueue<cuda::GpuMat> &results) {
                 }
 			}
 		}
+
 		if (send_results) {
-            sent_bytes  = 0;
-            do {
-                iSendResult = sts_net_send(&socket, (char *)final_result.data + sent_bytes, total_bytes - sent_bytes);
-				if (iSendResult < 0) {
-					fprintf(stderr, "sending data failed with error: %s\n", sts_net_get_last_error());
+            Mat final_result_yuv;
+            cvtColor(final_result, final_result, COLOR_BGR2RGB);
+            cvtColor(final_result, final_result_yuv, COLOR_BGR2YUV_I420);
+
+            if (add_black_bars) {
+                memcpy(pic->fulldata, final_result_yuv.data,
+                        (final_result.rows * final_result.cols) + (final_result.rows * final_result.cols / 2));
+            } else {
+                /* TODO:  */
+            }
+
+            uint64_t nwritten  = 0;
+            int32_t bytes_sent = 0;
+            kvz_data_chunk *chunks_out = NULL;
+
+            pic->pts++;
+
+            /* call encoder_encode until we get chunks, set img_in to NULL after first call */
+            for (kvz_picture *img_in = pic; chunks_out == NULL; img_in = NULL) {
+                api->encoder_encode(enc, img_in, &chunks_out, NULL, NULL, NULL, NULL);
+            }
+
+            for (kvz_data_chunk *chunk = chunks_out; chunk != NULL; chunk = chunk->next) {
+                int num_bytes = sts_net_send(&socket, chunk->data, chunk->len);
+
+                if (num_bytes <= 0) {
+                    fprintf(stderr, "sending data failed with error: %s\n", sts_net_get_last_error());
                     sts_net_close_socket(&socket);
                     sts_net_shutdown();
                     exit(EXIT_FAILURE);
-				}
-				sent_bytes += iSendResult;
-			} while (sent_bytes != total_bytes);
+                }
+            }
+            api->chunk_free(chunks_out);
 		}
+
 		if (save_video) {
 			outVideo << final_result;
 		}
+
 		if (first_frame) {
 			imwrite("calib_resized.jpg", resized_bgr);
 			imwrite("result.jpg", final_result);
 			first_frame = false;
 		}
+
 		if (show_out) {
 			imshow("Video", final_result);
 			waitKey(1);
@@ -269,6 +337,8 @@ void consume(BlockingQueue<cuda::GpuMat> &results) {
 			tp = std::chrono::high_resolution_clock::now();
 		}
 	}
+
+    delete send_buf;
 }
 
 bool getImages(vector<VideoCapture> caps, vector<Mat> &images, int skip = 0) {
