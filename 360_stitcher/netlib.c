@@ -119,6 +119,9 @@ void sts_net_close_socket(sts_net_socket_t *socket)
 	sts_net_reset_socket(socket);
 }
 
+/* return the last octet of client's IP on success and -1 on error 
+ * this ugly hack is needed because the order of cameras is very imporant and it's easier
+ * to just return the last octet here instead of extending the API and related data structures */
 int sts_net_accept_socket(sts_net_socket_t *listen_socket, sts_net_socket_t *remote_socket)
 {
 	struct sockaddr_in  sock_addr;
@@ -138,7 +141,12 @@ int sts_net_accept_socket(sts_net_socket_t *listen_socket, sts_net_socket_t *rem
 	
 	if (remote_socket->fd == INVALID_SOCKET)
 		return sts_net__set_error("Accept failed");
-	return 0;
+
+#ifdef _WIN32
+	return sock_addr.sin_addr.S_un.S_un_b.s_b4;
+#else
+    return ((sock_addr.sin_addr.s_addr) >> 24) & 0xff;
+#endif
 }
 
 int sts_net_send(sts_net_socket_t *socket, const void *data, int length)
@@ -149,7 +157,11 @@ int sts_net_send(sts_net_socket_t *socket, const void *data, int length)
 	if (socket->fd == INVALID_SOCKET)
 		return sts_net__set_error("Cannot send on closed socket");
 
+#ifdef __linux__
+    int bytes_sent = send(socket->fd, (const char *)data, length, MSG_NOSIGNAL);
+#else
     int bytes_sent = send(socket->fd, (const char *)data, length, 0);
+#endif
 
 	if (bytes_sent < 0)
 		return sts_net__set_error("Cannot send data");
@@ -157,7 +169,7 @@ int sts_net_send(sts_net_socket_t *socket, const void *data, int length)
 	return bytes_sent;
 }
 
-int sts_net_recv(sts_net_socket_t *socket, void *data, int length)
+int sts_net_recv(sts_net_socket_t *socket, void *data, int length, int flags)
 {
 	int result;
 	if (socket->server)
@@ -166,7 +178,7 @@ int sts_net_recv(sts_net_socket_t *socket, void *data, int length)
 		return sts_net__set_error("Cannot receive on closed socket");
 
 	socket->ready = 0;
-	result = recv(socket->fd, (char*)data, length, 0);
+	result = recv(socket->fd, (char*)data, length, flags);
 	if (result < 0)
 		return sts_net__set_error("Cannot receive data");
 	return result;
@@ -249,7 +261,7 @@ int sts_net_refill_packet_data(sts_net_socket_t *socket)
 	if (socket->ready)
 		return 0;
 
-	int received = sts_net_recv(socket, &socket->data[socket->received], STS_NET_PACKET_SIZE - socket->received);
+	int received = sts_net_recv(socket, &socket->data[socket->received], STS_NET_PACKET_SIZE - socket->received, 0);
 
 	if (received < 0)
 		return -1;

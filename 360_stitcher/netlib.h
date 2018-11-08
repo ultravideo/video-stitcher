@@ -106,7 +106,7 @@ int sts_net_send(sts_net_socket_t *socket, const void *data, int length);
 
 // Receive data from the socket.
 // NOTE: this call will block if the socket is not ready (meaning there's no data to receive).
-int sts_net_recv(sts_net_socket_t *socket, void *data, int length);
+int sts_net_recv(sts_net_socket_t *socket, void *data, int length, int flags);
 
 // Initialized a socket set.
 void sts_net_init_socket_set(sts_net_set_t *set);
