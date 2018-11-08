@@ -37,7 +37,6 @@
 #include "blockingqueue.h"
 #include "calibration.h"
 
-
 const int TIMES = 5;
 std::chrono::high_resolution_clock::time_point times[TIMES];
 
@@ -101,7 +100,7 @@ void stitch_online(double compose_scale, Mat &img, cuda::GpuMat &x_map, cuda::Gp
 		warped_images[img_num] = images[img_num];
 	}
 
-	//filter->apply(images[img_num], images[img_num], stream);
+	//ilter->apply(images[img_num], images[img_num], stream);
 	if (img_num == printing) {
 		times[3] = std::chrono::high_resolution_clock::now();
 	}
@@ -143,6 +142,34 @@ void stitch_one(double compose_scale, vector<Mat> &imgs, vector<cuda::GpuMat> &x
 	}
 }
 
+/* pc player: stitcher is client and player is server
+ * android player: stitcher is server and player is client */
+void connect_to_player(sts_net_socket_t *server, sts_net_socket_t *client)
+{
+    sts_net_close_socket(server);
+    sts_net_close_socket(client);
+
+#ifdef PC_PLAYER
+		if (sts_net_open_socket(client, PLAYER_ADDRESS, PLAYER_TCP_PORT) < 0) {
+            fprintf(stderr, "failed to open client socket: %s\n", sts_net_get_last_error());
+            exit(EXIT_FAILURE);
+		}
+#else
+        LOGLN("waiting for android player to connect...");
+
+        if (sts_net_open_socket(server, NULL, PLAYER_TCP_PORT) < 0) {
+            fprintf(stderr, "failed to open server socket: %s\n", sts_net_get_last_error());
+            exit(EXIT_FAILURE);
+        }
+
+        
+        if (sts_net_accept_socket(server, client) < 0) {
+            fprintf(stderr, "failed to open client socket: %s\n", sts_net_get_last_error());
+            exit(EXIT_FAILURE);
+        }
+#endif
+}
+
 void consume(BlockingQueue<cuda::GpuMat> &results)
 {
 	cuda::GpuMat mat;
@@ -161,25 +188,20 @@ void consume(BlockingQueue<cuda::GpuMat> &results)
             return;
 		}
 	}
+    sts_net_socket_t server, socket;
 	int frame_counter = 0;
-
 	int iSendResult;
-	sts_net_socket_t socket;
-    unsigned char *send_buf = NULL;
 
-    const kvz_api *api = kvz_api_get(8);
     kvz_config *config = NULL;
     kvz_encoder *enc   = NULL;
     kvz_picture *pic   = NULL;
+    kvz_api *api       = NULL;
 
 	if (send_results) {
-		sts_net_init();
+        sts_net_init();
+        connect_to_player(&server, &socket);
 
-		if (sts_net_open_socket(&socket, PLAYER_ADDRESS, PLAYER_TCP_PORT) < 0) {
-            fprintf(stderr, "failed to open client socket: %s\n", sts_net_get_last_error());
-            exit(EXIT_FAILURE);
-		}
-        LOGLN("Connected to player");
+        api = const_cast<kvz_api *>(kvz_api_get(8));
 
         if ((config = api->config_alloc()) == NULL) {
             LOGLN("ERROR: failed to allocate config");
@@ -189,7 +211,7 @@ void consume(BlockingQueue<cuda::GpuMat> &results)
 
         config->width = OUTPUT_WIDTH;
         config->height = OUTPUT_HEIGHT;
-        config->threads = 16;
+        api->config_parse(config, "preset", "ultrafast");
 
         if ((enc = api->encoder_open(config)) == NULL) {
             LOGLN("ERROR: failed to open encoder");
@@ -201,8 +223,6 @@ void consume(BlockingQueue<cuda::GpuMat> &results)
             exit(EXIT_FAILURE);
         }
         pic->pts = 0;
-
-        send_buf = new unsigned char[1024 * 1024];
 	}
 
 	Size resize_dst_size;
@@ -271,8 +291,6 @@ void consume(BlockingQueue<cuda::GpuMat> &results)
 
                 if (sts_net_send(&socket, (char *)&result_height, sizeof(int)) <= 0) {
                     fprintf(stderr, "sending image height failed with error: %s\n", sts_net_get_last_error());
-                    sts_net_close_socket(&socket);
-                    sts_net_shutdown();
                     exit(EXIT_FAILURE);
                 }
 			}
@@ -306,12 +324,22 @@ void consume(BlockingQueue<cuda::GpuMat> &results)
 
                 if (num_bytes <= 0) {
                     fprintf(stderr, "sending data failed with error: %s\n", sts_net_get_last_error());
-                    sts_net_close_socket(&socket);
-                    sts_net_shutdown();
-                    exit(EXIT_FAILURE);
+                    fprintf(stderr, "trying to reinitialize connection...\n");
+
+                    /* for android player this will block until the connection is re-established */
+                    connect_to_player(&server, &socket);
+
+                    /* reopen encoder to get valid bitstream again
+                     * (TODO: check with Marko if this is OK) */
+                    api->encoder_close(enc);
+                    if ((enc = api->encoder_open(config)) == NULL) {
+                        LOGLN("ERROR: failed to open encoder");
+                        exit(EXIT_FAILURE);
+                    }
                 }
             }
             api->chunk_free(chunks_out);
+            LOGLN("encoded frame");
 		}
 
 		if (save_video) {
@@ -337,8 +365,6 @@ void consume(BlockingQueue<cuda::GpuMat> &results)
 			tp = std::chrono::high_resolution_clock::now();
 		}
 	}
-
-    delete send_buf;
 }
 
 bool getImages(vector<VideoCapture> caps, vector<Mat> &images, int skip = 0) {
@@ -469,8 +495,9 @@ int main(int argc, char* argv[])
 	//-------------------------------------------------------------------------
 	BlockingQueue<cuda::GpuMat> results;
 	int64 starttime = getTickCount();
-	std::thread consumer(consume, std::ref(results));
 	int frame_amt = 0;
+    
+ 	std::thread consumer(consume, std::ref(results));
 
 	// ONLINE STITCHING // ------------------------------------------------------------------------------------------------------
 	while (1)
@@ -503,6 +530,8 @@ int main(int argc, char* argv[])
 	cuda::GpuMat matti;
 	bool sis = matti.empty();
 	results.push(matti);
-	consumer.join();
+
+ 	consumer.join();
+
 	return 0;
 }
