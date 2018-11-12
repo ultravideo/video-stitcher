@@ -672,19 +672,32 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features,
         set_values.setTo(Scalar::all(0));
         warp_x.setTo(Scalar::all(0));
         warp_y.setTo(Scalar::all(0));
-        for (int i = 0; i < mesh_size[idx].height; ++i) {
-            for (int j = 0; j < mesh_size[idx].width; ++j) {
-                int x = (int)big_mesh_x.at<float>(i, j) / scale;
-                int y = (int)big_mesh_y.at<float>(i, j) / scale;
-                if (x >= 0 && y >= 0 && x < warp_x.cols && y < warp_x.rows) {
-                    if (!set_values.at<float>(y, x)) {
-                        warp_x.at<float>(y, x) = (float)j;
-                        warp_y.at<float>(y, x) = (float)i;
-                        set_values.at<float>(y, x) = 1;
-                    }
+
+
+    Mat sum_x(mesh_size[idx].height / scale, mesh_size[idx].width / scale, mesh_cpu_x[idx].type());
+    Mat sum_y(mesh_size[idx].height / scale, mesh_size[idx].width / scale, mesh_cpu_y[idx].type());
+    sum_x.setTo(Scalar::all(0));
+    sum_y.setTo(Scalar::all(0));
+
+
+        for (int y = 0; y < mesh_size[idx].height; y++) {
+            for (int x = 0; x < mesh_size[idx].width; x++) {
+                int x_ = (int)big_mesh_x.at<float>(y, x) / scale;
+                int y_ = (int)big_mesh_y.at<float>(y, x) / scale;
+                if (x_ >= 0 && y_ >= 0 && x_ < warp_x.cols && y_ < warp_x.rows) {
+                        sum_x.at<float>(y_, x_) += (float)x;
+                        sum_y.at<float>(y_, x_) += (float)y;
+                        set_values.at<float>(y_, x_)++;
                 }
             }
         }
+        for (int y = 0; y < sum_x.rows; ++y) {
+            for (int x = 0; x < sum_x.cols; ++x) {
+                    warp_x.at<float>(y, x) = (float)sum_x.at<float>(y, x) / (float)set_values.at<float>(y, x);
+                    warp_y.at<float>(y, x) = (float)sum_y.at<float>(y, x) / (float)set_values.at<float>(y, x);
+            }
+        }
+
         gpu_small_mesh_x.upload(warp_x);
         gpu_small_mesh_y.upload(warp_y);
         custom_resize(gpu_small_mesh_x, x_mesh[idx], mesh_size[idx]);
