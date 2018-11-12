@@ -469,8 +469,6 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features,
                 meanStdDev(images[idx], mean, deviation, mask);
                 pow(deviation, 2, variance);
                 sal = 0.5f + norm(variance, NORM_L2) / 255;
-                b(smooth_start + row) = sal * a;
-                b(smooth_start + row + 1) = sal * a;
 
                 A.insert(smooth_start + row+1, 2*(j + M * (i+1) + M*N*idx)) = a * sal; // x2
                 A.insert(smooth_start + row+1, 2*(j + M * (i+1) + M*N*idx) + 1) = a * sal; // y2
