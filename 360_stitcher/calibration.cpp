@@ -406,10 +406,10 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features,
                         break;
                     }
                 }
-                A.insert(row, 2*(j + i*M + idx*M*N)) = a * tau;
-                A.insert(row + 1, 2*(j + i*M + idx*M*N)+1) = a * tau;
-                b(2*(j + i*M + idx*M*N)) = a * tau * x1;
-                b(2*(j + i*M + idx*M*N)+1) = a * tau * y1;
+                A.insert(row, row) = a * tau;
+                A.insert(row + 1, row + 1) = a * tau;
+                b(row) = a * tau * x1;
+                b(row + 1) = a * tau * y1;
                 row += 2;
             }
         }
@@ -442,10 +442,17 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features,
 
                 Mat mask(images[idx].rows, images[idx].cols, CV_8UC1);
                 mask.setTo(Scalar::all(0));
-                Point pts[3] = { Point(x1, y1), Point(x2, y1), Point(y2, x1) };
-                fillConvexPoly(mask, pts, 3, Scalar(1));
-                sal = 0.5f + norm(images[idx], NORM_L2, mask) / (255*255);
-                
+                Point pts[3] = { Point(x1, y1), Point(x1, y2), Point(x3, y2) };
+                fillConvexPoly(mask, pts, 3, Scalar(255));
+                Mat mean;
+                Mat deviation;
+
+                meanStdDev(images[idx], mean, deviation, mask);
+                Mat variance;
+                pow(deviation, 2, variance);
+                sal = 0.5f + norm(variance, NORM_L2) / 255;
+                /* printf("var: %f dev: %f div: %f\n", norm(variance, NORM_L2), norm(deviation, NORM_L2), norm(variance / 255, NORM_L2)); */
+
                 A.insert(smooth_start + row,   2*(j + M * i + M*N*idx)) = a * sal; // x1
                 A.insert(smooth_start + row,   2*(j + M * i + M*N*idx) + 1) = a * sal; // y1
                 A.insert(smooth_start + row,   2*(j + M * (i+1) + M*N*idx)) = a*(u + v - 1) * sal; // x2
@@ -454,9 +461,16 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features,
                 A.insert(smooth_start + row,   2*(j+1 + M * i + M*N*idx) + 1) = a*(-u + v) * sal; // y3
 
                 mask.setTo(Scalar::all(0));
-                Point pts2[3] = { Point(x2, y1), Point(x1, y2), Point(y2, x2) };
-                fillConvexPoly(mask, pts2, 3, Scalar(1));
-                sal = 0.5f + norm(images[idx], NORM_L2, mask) / (255*255);
+                Point pts2[3] = { Point(x1, y1), Point(x3, y1), Point(x3, y2) };
+                fillConvexPoly(mask, pts2, 3, Scalar(255));
+
+
+
+                meanStdDev(images[idx], mean, deviation, mask);
+                pow(deviation, 2, variance);
+                sal = 0.5f + norm(variance, NORM_L2) / 255;
+                b(smooth_start + row) = sal * a;
+                b(smooth_start + row + 1) = sal * a;
 
                 A.insert(smooth_start + row+1, 2*(j + M * (i+1) + M*N*idx)) = a * sal; // x2
                 A.insert(smooth_start + row+1, 2*(j + M * (i+1) + M*N*idx) + 1) = a * sal; // y2
