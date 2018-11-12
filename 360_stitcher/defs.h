@@ -25,6 +25,7 @@ const int skip_frames = 135;
 const bool wrapAround = true;
 const bool recalibrate = false;
 const bool enable_local = false;
+const bool enable_local_new = false;
 const bool save_video = false;
 const bool show_out = false;
 const bool use_stream = true;
