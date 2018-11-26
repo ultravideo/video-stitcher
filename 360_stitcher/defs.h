@@ -24,18 +24,18 @@ const std::string folder = base + "new";
 const int skip_frames = 135;
 const bool wrapAround = true;
 const bool recalibrate = false;
-const bool enable_local = false;
+const bool enable_local = true;
 const bool enable_local_new = false;
 const bool save_video = false;
-const bool show_out = false;
-const bool use_stream = true;
+const bool show_out = true;
+const bool use_stream = false;
 const bool clear_buffers = false;
 const bool debug_stream = false;
 const bool use_surf = true;
-const bool send_results = true;
+const bool send_results = false;
 const bool send_height_info = true;
 const bool keep_aspect_ratio = true;
-const bool add_black_bars = true; /* NOTE: this should be true if send_results is set to true */
+const bool add_black_bars = false; /* NOTE: this should be true if send_results is set to true */
 const int NUM_IMAGES = 6;
 const unsigned char clientAddrStart = 41; //The capture boards should have consecutive IP addresses, with the last octet starting from this number
 const int OUTPUT_WIDTH = 4096;
@@ -55,14 +55,14 @@ const int HESS_THRESH = 300;
 const int NOCTAVES = 4;
 const int NOCTAVESLAYERS = 2;
 
-const int MAX_FEATURES_PER_IMAGE = 20;
+const int MAX_FEATURES_PER_IMAGE = 30;
 const bool VISUALIZE_MATCHES = false; // Draw the meshes and matches to images pre mesh warp
-const bool VISUALIZE_WARPED = true; // Draw the warped mesh
-const int N = 2;
-const int M = 2;
+const bool VISUALIZE_WARPED = false; // Draw the warped mesh
+const int N = 4;
+const int M = 4;
 // Alphas are weights for different cost functions
 // 0: Local alignment, 1: Global alignment, 2: Smoothness
-const float ALPHAS[3] = {0.5f, 1.0f, 0.001f};
+const float ALPHAS[3] = {1.0f, 0.05f, 0.000f};
 const int GLOBAL_DIST = 4; // Maximum distance from vertex in global warping
 
 // Test material before right videos are obtained from the camera rig

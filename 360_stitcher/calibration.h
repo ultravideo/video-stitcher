@@ -28,7 +28,7 @@ void warpImages(std::vector<cv::Mat> full_img, cv::Size full_img_size,
                 float &warped_image_scale, float &blend_width);
 
 
-void calibrateMeshWarp(std::vector<cv::Mat> &full_imgs, std::vector<cv::detail::ImageFeatures> features,
+void calibrateMeshWarp(std::vector<cv::Mat> &full_imgs, std::vector<cv::detail::ImageFeatures> &features,
                        std::vector<cv::detail::MatchesInfo> &pairwise_matches,
                        std::vector<cv::cuda::GpuMat> &x_mesh, std::vector<cv::cuda::GpuMat> &y_mesh,
                        std::vector<cv::cuda::GpuMat> &x_maps, std::vector<cv::cuda::GpuMat> &y_maps,

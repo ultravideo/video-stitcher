@@ -33,7 +33,7 @@ void findFeatures(vector<Mat> &full_img, vector<ImageFeatures> &features,
     // Read images from file and resize if necessary
     for (int i = 0; i < NUM_IMAGES; i++) {
         // Negative value means processing images in the original size
-        if (WORK_MEGAPIX < 0)
+        if (WORK_MEGAPIX < 0 || work_scale < 0)
         {
             image = full_img[i];
         }
@@ -307,7 +307,8 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
     cuda::GpuMat gpu_mask_warped;
     cuda::GpuMat gpu_seam_mask;
     Mat mask_warped;
-    Ptr<cuda::Filter> dilation_filter = cuda::createMorphologyFilter(MORPH_DILATE, CV_8U, Mat());
+    // Dilate mask for local warping
+    Ptr<cuda::Filter> dilation_filter = cuda::createMorphologyFilter(MORPH_DILATE, CV_8U, Mat(), {-1,-1}, 3);
     for (int img_idx = 0; img_idx < NUM_IMAGES; img_idx++)
     {
         gpu_mask_warped.release();
@@ -551,7 +552,7 @@ void calibrateMeshWarp2(vector<Mat> &full_imgs, vector<ImageFeatures> features,
 
 
 
-void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features,
+void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> &features,
                        vector<MatchesInfo> &pairwise_matches, vector<cuda::GpuMat> &x_mesh,
                        vector<cuda::GpuMat> &y_mesh, vector<cuda::GpuMat> &x_maps,
                        vector<cuda::GpuMat> &y_maps, float focal_length, double compose_scale,
@@ -589,11 +590,14 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features,
         }
     }
 
+    findFeatures(images, features, -1);
+    matchFeatures(features, pairwise_matches);
+
     int features_per_image = MAX_FEATURES_PER_IMAGE;
     // 2 * images.size()*N*M for global alignment, 2*images.size()*(N-1)*(M-1) for smoothness term and
-    // 2 * (NUM_IMAGES +(int)wrapAround) * features_per_image for local alignment
+    // 2 * (NUM_IMAGES +(int)wrapAround + 1) * features_per_image for local alignment
     int num_rows = 2 * static_cast<int>(images.size())*N*M + 2* static_cast<int>(images.size())*(N-1)*(M-1) +
-                   2 * (NUM_IMAGES + (int)wrapAround) * features_per_image;
+                   2 * (NUM_IMAGES + (int)wrapAround + 1) * features_per_image;
     Eigen::SparseMatrix<double> A(num_rows, 2*N*M*images.size());
     Eigen::VectorXd b(num_rows);
     Eigen::VectorXd x;
@@ -613,6 +617,8 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features,
                 float y1 = static_cast<float>(i * mesh_size[idx].height / (N-1));
                 float scale = compose_scale / work_scale;
                 float tau = 1;
+                // Disabled, since it's implemented wrong
+                /*
                 for (int ft = 0; ft < features[idx].keypoints.size(); ++ft) {
                     Point ft_point = features[idx].keypoints[ft].pt;
                     if (sqrt(pow(ft_point.x * scale - x1, 2) + pow(ft_point.y * scale - y1, 2)) < GLOBAL_DIST) {
@@ -620,6 +626,7 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features,
                         break;
                     }
                 }
+                */
                 A.insert(row, row) = a * tau;
                 A.insert(row + 1, row + 1) = a * tau;
                 b(row) = a * tau * x1;
@@ -701,14 +708,14 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features,
                 for (int j = 0; j < mesh_cpu_x[idx].cols; ++j) {
                     Point start = Point(mesh_cpu_x[idx].at<float>(i, j), mesh_cpu_y[idx].at<float>(i, j));
                     Point end = Point(mesh_cpu_x[idx].at<float>(i + 1, j), mesh_cpu_y[idx].at<float>(i + 1, j));
-                    line(images[idx], start, end, Scalar(255, 0, 0), 2);
+                    line(images[idx], start, end, Scalar(255, 0, 0), 1);
                 }
             }
             for (int i = 0; i < mesh_cpu_x[idx].rows; ++i) {
                 for (int j = 0; j < mesh_cpu_x[idx].cols - 1; ++j) {
                     Point start = Point(mesh_cpu_x[idx].at<float>(i, j), mesh_cpu_y[idx].at<float>(i, j));
                     Point end = Point(mesh_cpu_x[idx].at<float>(i, j + 1), mesh_cpu_y[idx].at<float>(i, j + 1));
-                    line(images[idx], start, end, Scalar(255, 0, 0), 2);
+                    line(images[idx], start, end, Scalar(255, 0, 0), 1);
                 }
             }
         }
@@ -725,10 +732,17 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features,
         if (!pw_matches.matches.size() || !pw_matches.num_inliers) continue;
         int src = pw_matches.src_img_idx;
         int dst = pw_matches.dst_img_idx;
-        // Only calculate loss from pairs of src and dst where src = dst - 1
-        // to avoid using same pairs multiple times
-        if (abs(src - dst - 1) > 0.1) { 
+
+        // TODO: camera 3 is a special case, because it's split in the middle. Better solution
+        // other than skipping it is needed.
+        if (dst == 3 || src == 3)
             continue;
+        if (dst != 5 || src != 0) {
+            // Only calculate loss from pairs of src and dst where src = dst - 1
+            // to avoid using same pairs multiple times
+            if (abs(src - dst - 1) > 0.1) {
+                continue;
+            }
         }
 
 		valid_indexes_orig.clear();
@@ -761,23 +775,20 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features,
                 float h2 = features[dst].img_size.height;
                 float w2 = features[dst].img_size.width;
 
-                float x1 = k1.pt.x - w1 / 2;
-                float y1 = k1.pt.y - h1 / 2;
-                float x2 = k2.pt.x - w2 / 2;
-                float y2 = k2.pt.y - h2 / 2;
-
                 float theta = dst - src;
                 if (src == 0 && dst == NUM_IMAGES - 1 && wrapAround) {
                     theta = -1;
                 }
                 theta *= 2 * PI / 6;
+                Point2f p1 = features[src].keypoints[idx1].pt;
+                Point2f p2 = features[dst].keypoints[idx2].pt;
 
-                // Feature points are from work scale images change scale to compose scale
                 float scale = compose_scale / work_scale;
-                float x1_ = (f * atan(x1 / f) + w1 / 2) * scale;
-                float x2_ = (f * atan(x2 / f) + w2 / 2) * scale;
-                float y1_ = (f * y1 / sqrt(x1*x1 + f*f) + h1 / 2) * scale;
-                float y2_ = (f * y2 / sqrt(x2*x2 + f*f) + h2 / 2) * scale;
+
+                float x1_ = p1.x;
+                float y1_ = p1.y;
+                float x2_ = p2.x;
+                float y2_ = p2.y;
 
                 // change the image sizes to compose scale as well
                 h1 = images[src].rows;
@@ -793,7 +804,7 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features,
 
                 if(VISUALIZE_MATCHES) {
                     circle(images[src], Point(x1_, y1_), 3, Scalar(0, 255, 0), 3);
-                    circle(images[src], Point(x2_ + f * scale * theta, y2_), 3, Scalar(0, 0, 255), 3);
+                    circle(images[dst], Point(x2_, y2_), 3, Scalar(0, 255, 0), 3);
                     imshow(std::to_string(src), images[src]);
                     imshow(std::to_string(dst), images[dst]);
                     waitKey(0);
@@ -886,10 +897,10 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features,
         warp_y.setTo(Scalar::all(0));
 
 
-    Mat sum_x(mesh_size[idx].height / scale, mesh_size[idx].width / scale, mesh_cpu_x[idx].type());
-    Mat sum_y(mesh_size[idx].height / scale, mesh_size[idx].width / scale, mesh_cpu_y[idx].type());
-    sum_x.setTo(Scalar::all(0));
-    sum_y.setTo(Scalar::all(0));
+        Mat sum_x(mesh_size[idx].height / scale, mesh_size[idx].width / scale, mesh_cpu_x[idx].type());
+        Mat sum_y(mesh_size[idx].height / scale, mesh_size[idx].width / scale, mesh_cpu_y[idx].type());
+        sum_x.setTo(Scalar::all(0));
+        sum_y.setTo(Scalar::all(0));
 
 
         for (int y = 0; y < mesh_size[idx].height; y++) {
@@ -917,6 +928,7 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> features,
 
         if (VISUALIZE_WARPED) {
             Mat mat(mesh_size[idx].height, mesh_size[idx].width, CV_16UC3);
+            mat.setTo(Scalar::all(255 * 255));
             for (int i = 0; i < mesh_cpu_x[idx].rows - 1; ++i) {
                 for (int j = 0; j < mesh_cpu_x[idx].cols; ++j) {
                     Point start = Point(mesh_cpu_x[idx].at<float>(i, j), mesh_cpu_y[idx].at<float>(i, j));
@@ -974,10 +986,6 @@ bool stitch_calib(vector<Mat> full_img, vector<CameraParams> &cameras, vector<cu
 
 	vector<ImageFeatures> features(NUM_IMAGES);
 	vector<MatchesInfo> pairwise_matches(NUM_IMAGES - 1 + (int)wrapAround);
-	if (enable_local) {
-		findFeatures(full_img, features, work_scale);
-		matchFeatures(features, pairwise_matches);
-	}
 
     // STEP 2: estimating homographies // ---------------------------------------------------------------------------------------
     if (!calibrateCameras(cameras, full_img_size, work_scale)) {
@@ -1009,10 +1017,7 @@ void recalibrateMesh(std::vector<cv::Mat> &full_img, std::vector<cv::cuda::GpuMa
                      const double &work_scale)
 {
     vector<ImageFeatures> features(NUM_IMAGES);
-    findFeatures(full_img, features, work_scale);
-
     vector<MatchesInfo> pairwise_matches;
-    matchFeatures(features, pairwise_matches);
 
     calibrateMeshWarp(full_img, features, pairwise_matches, x_mesh, y_mesh, x_maps, y_maps,
                       focal_length, compose_scale, work_scale);
