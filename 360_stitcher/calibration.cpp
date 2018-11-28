@@ -307,7 +307,8 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
     cuda::GpuMat gpu_mask_warped;
     cuda::GpuMat gpu_seam_mask;
     Mat mask_warped;
-    // Dilate mask for local warping
+    // Dilation filter for local warping, without dilation local warping will cause black borders between seams
+    // Better solution might be needed in the future
     Ptr<cuda::Filter> dilation_filter = cuda::createMorphologyFilter(MORPH_DILATE, CV_8U, Mat(), {-1,-1}, 3);
     for (int img_idx = 0; img_idx < NUM_IMAGES; img_idx++)
     {
@@ -330,7 +331,11 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 
         gpu_masks_warped[img_idx].upload(masks_warped[img_idx]);
 
-        dilation_filter->apply(gpu_masks_warped[img_idx], gpu_seam_mask);
+        if (enable_local)
+            dilation_filter->apply(gpu_masks_warped[img_idx], gpu_seam_mask);
+        else
+            gpu_seam_mask = gpu_masks_warped[img_idx];
+
         cuda::resize(gpu_seam_mask, gpu_seam_mask, gpu_mask_warped.size(), 0.0, 0.0, 1);
         cuda::bitwise_and(gpu_seam_mask, gpu_mask_warped, gpu_mask_warped, noArray());
 
