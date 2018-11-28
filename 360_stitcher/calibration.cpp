@@ -837,27 +837,48 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> &features,
                 float v1 = (y1_ - top1) / (bot1 - top1);
                 float v2 = (y2_ - top2) / (bot2 - top2);
 
+
                 // _x_ - _x2_ = theta * f * scale
+                // Differs from the way of warping in the paper.
+                // This constraint tries keep x-distance between featurepoint fp1 and featurepoint fp2
+                // constant across the whole image. The desired x-distance constant between featurepoints is
+                // theta * f * scale * a. 
+                // For example if "theta * f * scale * a" is replaced with "fp1 - fp2", the warping will do nothing
+
+                // fp1 bilinear mapping
+                // from: https://www2.eecs.berkeley.edu/Pubs/TechRpts/1989/CSD-89-516.pdf
                 A.insert(local_start + row,  2*(l1   + M * (t1)   + M*N*src)) = (1-u1)*(1-v1) * a;
                 A.insert(local_start + row,  2*(l1+1 + M * (t1)   + M*N*src)) = u1*(1-v1) * a;
                 A.insert(local_start + row,  2*(l1 +   M * (t1+1) + M*N*src)) = v1*(1-u1) * a;
                 A.insert(local_start + row,  2*(l1+1 + M * (t1+1) + M*N*src)) = u1*v1 * a;
+                // fp2 bilinear mapping
                 A.insert(local_start + row,  2*(l2   + M * (t2)   + M*N*dst)) = -(1-u2)*(1-v2) * a;
                 A.insert(local_start + row,  2*(l2+1 + M * (t2)   + M*N*dst)) = -u2*(1-v2) * a;
                 A.insert(local_start + row,  2*(l2 +   M * (t2+1) + M*N*dst)) = -v2*(1-u2) * a;
                 A.insert(local_start + row,  2*(l2+1 + M * (t2+1) + M*N*dst)) = -u2*v2 * a;
-
+                // distance to warp to the feature points
                 b(local_start + row) = theta * f * scale * a;
 
+
                 // _y_ - _y2_ = 0
+                // Differs from the way of warping in the paper.
+                // This constraint tries keep y-distance between featurepoint fp1 and featurepoint fp2
+                // constant across the whole image. The desired y-distance constant between featurepoints is 0.
+
+                // fp1 bilinear mapping
                 A.insert(local_start + row+1, 2*(l1   + M * (t1)   + M*N*src)+1) = (1-u1)*(1-v1) * a;
                 A.insert(local_start + row+1, 2*(l1+1 + M * (t1)   + M*N*src)+1) = u1*(1-v1) * a;
                 A.insert(local_start + row+1, 2*(l1 +   M * (t1+1) + M*N*src)+1) = v1*(1-u1) * a;
                 A.insert(local_start + row+1, 2*(l1+1 + M * (t1+1) + M*N*src)+1) = u1*v1 * a;
+                // fp2 bilinear mapping
                 A.insert(local_start + row+1, 2*(l2   + M * (t2)   + M*N*dst)+1) = -(1-u2)*(1-v2) * a;
                 A.insert(local_start + row+1, 2*(l2+1 + M * (t2)   + M*N*dst)+1) = -u2*(1-v2) * a;
                 A.insert(local_start + row+1, 2*(l2 +   M * (t2+1) + M*N*dst)+1) = -v2*(1-u2) * a;
                 A.insert(local_start + row+1, 2*(l2+1 + M * (t2+1) + M*N*dst)+1) = -u2*v2 * a;
+                // b should be zero anyway, but for posterity's sake set it to zero
+                b(local_start + row + 1) = 0;
+
+
                 row+=2;
                 break;
             }
