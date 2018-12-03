@@ -62,7 +62,7 @@ const int N = 4;
 const int M = 4;
 // Alphas are weights for different cost functions
 // 0: Local alignment, 1: Global alignment, 2: Smoothness
-const float ALPHAS[3] = {1.0f, 0.05f, 0.000f};
+const float ALPHAS[3] = {1.0f, 0.01f, 0.001f};
 const int GLOBAL_DIST = 4; // Maximum distance from vertex in global warping
 
 // Test material before right videos are obtained from the camera rig

@@ -768,11 +768,8 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> &features,
         int src = pw_matches.src_img_idx;
         int dst = pw_matches.dst_img_idx;
 
-        // TODO: camera 3 is a special case, because it's split in the middle. Better solution
-        // other than skipping it is needed.
-        if (dst == 3 || src == 3)
-            continue;
-        if (dst != 5 || src != 0) {
+        valid_indexes_orig = valid_indexes_orig_all[src];
+        if (dst != NUM_IMAGES - 1 || src != 0) {
             // Only calculate loss from pairs of src and dst where src = dst - 1
             // to avoid using same pairs multiple times
             if (abs(src - dst - 1) > 0.1) {
@@ -801,10 +798,19 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> &features,
                 float h2 = features[dst].img_size.height;
                 float w2 = features[dst].img_size.width;
 
+                // Distance between dst and src in radians
                 float theta = dst - src;
                 if (src == 0 && dst == NUM_IMAGES - 1 && wrapAround) {
                     theta = -1;
                 }
+                // Hardcoded values and camera sources. Opencv splits the third video in the middle
+                if (src == 3) {
+                    theta = 4.25f;
+                }
+                if (src == 4) {
+                    theta = -0.25f;
+                }
+
                 theta *= 2 * PI / 6;
                 Point2f p1 = features[src].keypoints[idx1].pt;
                 Point2f p2 = features[dst].keypoints[idx2].pt;
