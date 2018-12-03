@@ -612,6 +612,30 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> &features,
     int smooth_start = 2 * static_cast<int>(images.size())*N*M;
     int local_start = 2 * static_cast<int>(images.size())*N*M + 2* static_cast<int>(images.size())*(N-1)*(M-1);
 
+    vector<int> valid_indexes_orig_all[NUM_IMAGES];
+    for (int idx = 0; idx < pairwise_matches.size(); ++idx) {
+        MatchesInfo &pw_matches = pairwise_matches[idx];
+        if (!pw_matches.matches.size() || !pw_matches.num_inliers) continue;
+        int src = pw_matches.src_img_idx;
+        int dst = pw_matches.dst_img_idx;
+
+        if (dst != NUM_IMAGES - 1 || src != 0 && dst == 5) {
+            // Only calculate loss from pairs of src and dst where src = dst - 1
+            // to avoid using same pairs multiple times
+            if (abs(src - dst - 1) > 0.1) {
+                continue;
+            }
+        }
+
+		//Find all indexes of the inliers_mask that contain the value 1
+        for (int i = 0; i < pw_matches.inliers_mask.size(); i++) {
+            if (pw_matches.inliers_mask[i]) {
+                valid_indexes_orig_all[src].push_back(i);
+            }
+        }
+    }
+
+
     // Global alignment term from http://web.cecs.pdx.edu/~fliu/papers/cvpr2014-stitching.pdf
     // Square root ALPHAS, because equation is in format |Ax + b|^2 instead of Ax + b
     // |sqrt(ALPHA) * (Ax + b)|^2 == ALPHA * |Ax + b|^2
@@ -755,15 +779,6 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> &features,
                 continue;
             }
         }
-
-		valid_indexes_orig.clear();
-		//Find all indexes of the inliers_mask that contain the value 1
-		for (int i = 0; i < pw_matches.inliers_mask.size(); i++) {
-			if (pw_matches.inliers_mask[i]) {
-				valid_indexes_orig.push_back(i);
-			}
-		}
-		if (valid_indexes_orig.size() == 0) continue;
 
         for (int i = 0; i < min(features_per_image, (int)(pw_matches.matches.size() * 0.8f)); ++i) {
 			//Shuffle the index vector on each loop to get random results each time
