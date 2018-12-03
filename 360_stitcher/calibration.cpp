@@ -613,7 +613,9 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> &features,
     int local_start = 2 * static_cast<int>(images.size())*N*M + 2* static_cast<int>(images.size())*(N-1)*(M-1);
 
     // Global alignment term from http://web.cecs.pdx.edu/~fliu/papers/cvpr2014-stitching.pdf
-    float a = ALPHAS[1];
+    // Square root ALPHAS, because equation is in format |Ax + b|^2 instead of Ax + b
+    // |sqrt(ALPHA) * (Ax + b)|^2 == ALPHA * |Ax + b|^2
+    float a = sqrt(ALPHAS[1]);
     int row = 0;
     for (int idx = 0; idx < images.size(); ++idx) {
         for (int i = 0; i < N; ++i) {
@@ -643,7 +645,7 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> &features,
 
     row = 0;
     // Smoothness term from http://web.cecs.pdx.edu/~fliu/papers/cvpr2014-stitching.pdf
-    a = ALPHAS[2];
+    a = sqrt(ALPHAS[2]);
     for (int idx = 0; idx < images.size(); ++idx) {
         for (int i = 0; i < N-1; ++i) {
             for (int j = 0; j < M-1; ++j) {
@@ -729,7 +731,7 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> &features,
     // Local alignment term from http://web.cecs.pdx.edu/~fliu/papers/cvpr2014-stitching.pdf
     row = 0;
     float f = focal_length;
-    a = ALPHAS[0];
+    a = sqrt(ALPHAS[0]);
 	vector<int> valid_indexes_orig;
 	vector<int> valid_indexes;
     for (int idx = 0; idx < pairwise_matches.size(); ++idx) {
@@ -885,6 +887,7 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> &features,
         }
     }
 
+    // LeastSquaresConjudateGradientSolver solves equations that are in format |Ax + b|^2
     Eigen::LeastSquaresConjugateGradient<Eigen::SparseMatrix<double>> solver;
     solver.compute(A);
     x = solver.solve(b);
