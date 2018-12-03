@@ -353,6 +353,7 @@ void consume(BlockingQueue<cuda::GpuMat> &results)
 		}
 
 		if (show_out) {
+			cvtColor(final_result, final_result, CV_BGR2RGB);
 			imshow("Video", final_result);
 			waitKey(1);
 		}
