@@ -404,7 +404,11 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> &features,
     int smooth_start = 2 * static_cast<int>(images.size())*N*M;
     int local_start = 2 * static_cast<int>(images.size())*N*M + 2* static_cast<int>(images.size())*(N-1)*(M-1);
 
+
     vector<int> valid_indexes_orig_all[NUM_IMAGES];
+    vector<DMatch> all_matches[NUM_IMAGES];
+
+    // Select all matches that fit criteria
     for (int idx = 0; idx < pairwise_matches.size(); ++idx) {
         MatchesInfo &pw_matches = pairwise_matches[idx];
         if (!pw_matches.matches.size() || !pw_matches.num_inliers) continue;
@@ -420,10 +424,32 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> &features,
         }
 
 		//Find all indexes of the inliers_mask that contain the value 1
-        for (int i = 0; i < pw_matches.inliers_mask.size(); i++) {
+        for (int i = 0; i < pw_matches.inliers_mask.size(); ++i) {
             if (pw_matches.inliers_mask[i]) {
                 valid_indexes_orig_all[src].push_back(i);
+                DMatch match = pw_matches.matches[i];
+                all_matches[src].push_back(match);
             }
+        }
+    }
+
+
+    vector<int> valid_indexes_selected[NUM_IMAGES];
+    vector<DMatch> selected_matches[NUM_IMAGES];
+
+    // Select features_per_image amount of random features points from valid_indexes_orig_all
+    for (int img = 0; img < NUM_IMAGES; ++img) {
+        vector<int> valid_indexes;
+        valid_indexes = valid_indexes_orig_all[img];
+        std::random_shuffle(valid_indexes.begin(), valid_indexes.end());
+
+        //Shuffle the index vector on each loop to get random results each time
+        for (int i = 0; i < min(features_per_image, (int)(valid_indexes.size() * 0.8f)); ++i) {
+            int idx = valid_indexes.at(i);
+            valid_indexes_selected[img].push_back(idx);
+
+            DMatch match = all_matches[img].at(i);
+            selected_matches[img].push_back(match);
         }
     }
 
@@ -440,16 +466,19 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> &features,
                 float y1 = static_cast<float>(i * mesh_size[idx].height / (N-1));
                 float scale = compose_scale / work_scale;
                 float tau = 1;
-                // Disabled, since it's implemented wrong
-                /*
-                for (int ft = 0; ft < features[idx].keypoints.size(); ++ft) {
-                    Point ft_point = features[idx].keypoints[ft].pt;
-                    if (sqrt(pow(ft_point.x * scale - x1, 2) + pow(ft_point.y * scale - y1, 2)) < GLOBAL_DIST) {
+
+                for (int ft = 0; ft < selected_matches[idx].size(); ++ft) {
+                    int ft_id = selected_matches[idx][ft].queryIdx;
+                    Point ft_point = features[idx].keypoints[ft_id].pt;
+                    if (sqrt(pow(ft_point.x - x1, 2) + pow(ft_point.y - y1, 2)) < GLOBAL_DIST) {
                         tau = 0;
-                        break;
+                        if (VISUALIZE_MATCHES)
+                            circle(images[idx], Point(ft_point.x, ft_point.y), 4, Scalar(0, 255, 255), 3);
+                        else
+                            break;
                     }
                 }
-                */
+
                 A.insert(row, row) = a * tau;
                 A.insert(row + 1, row + 1) = a * tau;
                 b(row) = a * tau * x1;
@@ -552,7 +581,7 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> &features,
         int src = pw_matches.src_img_idx;
         int dst = pw_matches.dst_img_idx;
 
-        valid_indexes_orig = valid_indexes_orig_all[src];
+        valid_indexes_orig = valid_indexes_selected[src];
         if (dst != NUM_IMAGES - 1 || src != 0) {
             // Only calculate loss from pairs of src and dst where src = dst - 1
             // to avoid using same pairs multiple times
@@ -561,138 +590,128 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> &features,
             }
         }
 
-        for (int i = 0; i < min(features_per_image, (int)(pw_matches.matches.size() * 0.8f)); ++i) {
-			//Shuffle the index vector on each loop to get random results each time
-			valid_indexes = valid_indexes_orig;
-			std::random_shuffle(valid_indexes.begin(), valid_indexes.end());
-			while (1) {
-				if (valid_indexes.size() == 0) break;
-				int idx = valid_indexes.back();
-				valid_indexes.pop_back();
-                // Only use inlier matches
-                if (!pw_matches.inliers_mask[idx]) continue;
+        valid_indexes = valid_indexes_orig;
+        for(int i = 0; i < valid_indexes.size(); ++i) {
+            int idx = valid_indexes.at(i);
 
-                int idx1 = pw_matches.matches[idx].queryIdx;
-                int idx2 = pw_matches.matches[idx].trainIdx;
-                KeyPoint k1 = features[src].keypoints[idx1];
-                KeyPoint k2 = features[dst].keypoints[idx2];
+            int idx1 = pw_matches.matches[idx].queryIdx;
+            int idx2 = pw_matches.matches[idx].trainIdx;
+            KeyPoint k1 = features[src].keypoints[idx1];
+            KeyPoint k2 = features[dst].keypoints[idx2];
 
-                float h1 = features[src].img_size.height;
-                float w1 = features[src].img_size.width;
-                float h2 = features[dst].img_size.height;
-                float w2 = features[dst].img_size.width;
+            float h1 = features[src].img_size.height;
+            float w1 = features[src].img_size.width;
+            float h2 = features[dst].img_size.height;
+            float w2 = features[dst].img_size.width;
 
-                // Distance between dst and src in radians
-                float theta = dst - src;
-                if (src == 0 && dst == NUM_IMAGES - 1 && wrapAround) {
-                    theta = -1;
-                }
-                // Hardcoded values and camera sources. Opencv splits the third video in the middle
-                if (src == 3) {
-                    theta = 4.25f;
-                }
-                if (src == 4) {
-                    theta = -0.25f;
-                }
-
-                theta *= 2 * PI / 6;
-                Point2f p1 = features[src].keypoints[idx1].pt;
-                Point2f p2 = features[dst].keypoints[idx2].pt;
-
-                float scale = compose_scale / work_scale;
-
-                float x1_ = p1.x;
-                float y1_ = p1.y;
-                float x2_ = p2.x;
-                float y2_ = p2.y;
-
-                // change the image sizes to compose scale as well
-                h1 = images[src].rows;
-                w1 = images[src].cols;
-                h2 = images[dst].rows;
-                w2 = images[dst].cols;
-
-                // Ignore features which have been warped outside of either image
-                if (x1_ < 0 || x2_ < 0 || y1_ < 0 || y2_ < 0 || x1_ >= w1 || x2_ >= w2
-                        || y1_ >= h1 || y2_ >= h2 ) {
-                    continue;
-                }
-
-                if(VISUALIZE_MATCHES) {
-                    circle(images[src], Point(x1_, y1_), 3, Scalar(0, 255, 0), 3);
-                    circle(images[dst], Point(x2_, y2_), 3, Scalar(0, 255, 0), 3);
-                    imshow(std::to_string(src), images[src]);
-                    imshow(std::to_string(dst), images[dst]);
-                    waitKey(0);
-                }
-
-                // Calculate in which rectangle the features are
-                int t1 = floor(y1_ * (N-1) / h1);
-                int t2 = floor(y2_ * (N-1) / h2);
-                int l1 = floor(x1_ * (M-1) / w1);
-                int l2 = floor(x2_ * (M-1) / w2);
-
-                // Calculate coordinates for the corners of the recatngles the features are in
-                float top1 = t1 * h1 / (N-1);
-                float bot1 = top1 + h1 / (N-1); // (t1+1) * h1 / N
-                float left1 = l1 * w1 / (M-1);
-                float right1 = left1 + w1 / (M-1); // (l1+1) * w1 / M
-                float top2 = t2 * h2 / (N-1);
-                float bot2 = top2 + h2 / (N-1); // (t2+1) * h2 / N
-                float left2 = l2 * w2 / (M-1);
-                float right2 = left2 + w2 / (M-1); // (l2+1) * w2 / M
-
-                // Calculate local coordinates for the features within the rectangles
-                float u1 = (x1_ - left1) / (right1 - left1);
-                float u2 = (x2_ - left2) / (right2 - left2);
-                float v1 = (y1_ - top1) / (bot1 - top1);
-                float v2 = (y2_ - top2) / (bot2 - top2);
-
-
-                // _x_ - _x2_ = theta * f * scale
-                // Differs from the way of warping in the paper.
-                // This constraint tries keep x-distance between featurepoint fp1 and featurepoint fp2
-                // constant across the whole image. The desired x-distance constant between featurepoints is
-                // theta * f * scale * a. 
-                // For example if "theta * f * scale * a" is replaced with "fp1 - fp2", the warping will do nothing
-
-                // fp1 bilinear mapping
-                // from: https://www2.eecs.berkeley.edu/Pubs/TechRpts/1989/CSD-89-516.pdf
-                A.insert(local_start + row,  2*(l1   + M * (t1)   + M*N*src)) = (1-u1)*(1-v1) * a;
-                A.insert(local_start + row,  2*(l1+1 + M * (t1)   + M*N*src)) = u1*(1-v1) * a;
-                A.insert(local_start + row,  2*(l1 +   M * (t1+1) + M*N*src)) = v1*(1-u1) * a;
-                A.insert(local_start + row,  2*(l1+1 + M * (t1+1) + M*N*src)) = u1*v1 * a;
-                // fp2 bilinear mapping
-                A.insert(local_start + row,  2*(l2   + M * (t2)   + M*N*dst)) = -(1-u2)*(1-v2) * a;
-                A.insert(local_start + row,  2*(l2+1 + M * (t2)   + M*N*dst)) = -u2*(1-v2) * a;
-                A.insert(local_start + row,  2*(l2 +   M * (t2+1) + M*N*dst)) = -v2*(1-u2) * a;
-                A.insert(local_start + row,  2*(l2+1 + M * (t2+1) + M*N*dst)) = -u2*v2 * a;
-                // distance to warp to the feature points
-                b(local_start + row) = theta * f * scale * a;
-
-
-                // _y_ - _y2_ = 0
-                // Differs from the way of warping in the paper.
-                // This constraint tries keep y-distance between featurepoint fp1 and featurepoint fp2
-                // constant across the whole image. The desired y-distance constant between featurepoints is 0.
-
-                // fp1 bilinear mapping
-                A.insert(local_start + row+1, 2*(l1   + M * (t1)   + M*N*src)+1) = (1-u1)*(1-v1) * a;
-                A.insert(local_start + row+1, 2*(l1+1 + M * (t1)   + M*N*src)+1) = u1*(1-v1) * a;
-                A.insert(local_start + row+1, 2*(l1 +   M * (t1+1) + M*N*src)+1) = v1*(1-u1) * a;
-                A.insert(local_start + row+1, 2*(l1+1 + M * (t1+1) + M*N*src)+1) = u1*v1 * a;
-                // fp2 bilinear mapping
-                A.insert(local_start + row+1, 2*(l2   + M * (t2)   + M*N*dst)+1) = -(1-u2)*(1-v2) * a;
-                A.insert(local_start + row+1, 2*(l2+1 + M * (t2)   + M*N*dst)+1) = -u2*(1-v2) * a;
-                A.insert(local_start + row+1, 2*(l2 +   M * (t2+1) + M*N*dst)+1) = -v2*(1-u2) * a;
-                A.insert(local_start + row+1, 2*(l2+1 + M * (t2+1) + M*N*dst)+1) = -u2*v2 * a;
-                // b should be zero anyway, but for posterity's sake set it to zero
-                b(local_start + row + 1) = 0;
-
-
-                row+=2;
-                break;
+            // Distance between dst and src in radians
+            float theta = dst - src;
+            if (src == 0 && dst == NUM_IMAGES - 1 && wrapAround) {
+                theta = -1;
             }
+            // Hardcoded values and camera sources. Opencv splits the third video in the middle
+            if (src == 3) {
+                theta = 4.25f;
+            }
+            if (src == 4) {
+                theta = -0.25f;
+            }
+
+            theta *= 2 * PI / 6;
+            Point2f p1 = features[src].keypoints[idx1].pt;
+            Point2f p2 = features[dst].keypoints[idx2].pt;
+
+            float scale = compose_scale / work_scale;
+
+            float x1_ = p1.x;
+            float y1_ = p1.y;
+            float x2_ = p2.x;
+            float y2_ = p2.y;
+
+            // change the image sizes to compose scale as well
+            h1 = images[src].rows;
+            w1 = images[src].cols;
+            h2 = images[dst].rows;
+            w2 = images[dst].cols;
+
+            // Ignore features which have been warped outside of either image
+            if (x1_ < 0 || x2_ < 0 || y1_ < 0 || y2_ < 0 || x1_ >= w1 || x2_ >= w2
+                    || y1_ >= h1 || y2_ >= h2 ) {
+                continue;
+            }
+
+            if(VISUALIZE_MATCHES) {
+                circle(images[src], Point(x1_, y1_), 3, Scalar(0, 255, 0), 3);
+                circle(images[dst], Point(x2_, y2_), 3, Scalar(0, 0, 255), 3);
+                imshow(std::to_string(src), images[src]);
+                imshow(std::to_string(dst), images[dst]);
+                waitKey(0);
+            }
+
+            // Calculate in which rectangle the features are
+            int t1 = floor(y1_ * (N-1) / h1);
+            int t2 = floor(y2_ * (N-1) / h2);
+            int l1 = floor(x1_ * (M-1) / w1);
+            int l2 = floor(x2_ * (M-1) / w2);
+
+            // Calculate coordinates for the corners of the recatngles the features are in
+            float top1 = t1 * h1 / (N-1);
+            float bot1 = top1 + h1 / (N-1); // (t1+1) * h1 / N
+            float left1 = l1 * w1 / (M-1);
+            float right1 = left1 + w1 / (M-1); // (l1+1) * w1 / M
+            float top2 = t2 * h2 / (N-1);
+            float bot2 = top2 + h2 / (N-1); // (t2+1) * h2 / N
+            float left2 = l2 * w2 / (M-1);
+            float right2 = left2 + w2 / (M-1); // (l2+1) * w2 / M
+
+            // Calculate local coordinates for the features within the rectangles
+            float u1 = (x1_ - left1) / (right1 - left1);
+            float u2 = (x2_ - left2) / (right2 - left2);
+            float v1 = (y1_ - top1) / (bot1 - top1);
+            float v2 = (y2_ - top2) / (bot2 - top2);
+
+
+            // _x_ - _x2_ = theta * f * scale
+            // Differs from the way of warping in the paper.
+            // This constraint tries keep x-distance between featurepoint fp1 and featurepoint fp2
+            // constant across the whole image. The desired x-distance constant between featurepoints is
+            // theta * f * scale * a. 
+            // For example if "theta * f * scale * a" is replaced with "fp1 - fp2", the warping will do nothing
+
+            // fp1 bilinear mapping
+            // from: https://www2.eecs.berkeley.edu/Pubs/TechRpts/1989/CSD-89-516.pdf
+            A.insert(local_start + row,  2*(l1   + M * (t1)   + M*N*src)) = (1-u1)*(1-v1) * a;
+            A.insert(local_start + row,  2*(l1+1 + M * (t1)   + M*N*src)) = u1*(1-v1) * a;
+            A.insert(local_start + row,  2*(l1 +   M * (t1+1) + M*N*src)) = v1*(1-u1) * a;
+            A.insert(local_start + row,  2*(l1+1 + M * (t1+1) + M*N*src)) = u1*v1 * a;
+            // fp2 bilinear mapping
+            A.insert(local_start + row,  2*(l2   + M * (t2)   + M*N*dst)) = -(1-u2)*(1-v2) * a;
+            A.insert(local_start + row,  2*(l2+1 + M * (t2)   + M*N*dst)) = -u2*(1-v2) * a;
+            A.insert(local_start + row,  2*(l2 +   M * (t2+1) + M*N*dst)) = -v2*(1-u2) * a;
+            A.insert(local_start + row,  2*(l2+1 + M * (t2+1) + M*N*dst)) = -u2*v2 * a;
+            // distance to warp to the feature points
+            b(local_start + row) = theta * f * scale * a;
+
+
+            // _y_ - _y2_ = 0
+            // Differs from the way of warping in the paper.
+            // This constraint tries keep y-distance between featurepoint fp1 and featurepoint fp2
+            // constant across the whole image. The desired y-distance constant between featurepoints is 0.
+
+            // fp1 bilinear mapping
+            A.insert(local_start + row+1, 2*(l1   + M * (t1)   + M*N*src)+1) = (1-u1)*(1-v1) * a;
+            A.insert(local_start + row+1, 2*(l1+1 + M * (t1)   + M*N*src)+1) = u1*(1-v1) * a;
+            A.insert(local_start + row+1, 2*(l1 +   M * (t1+1) + M*N*src)+1) = v1*(1-u1) * a;
+            A.insert(local_start + row+1, 2*(l1+1 + M * (t1+1) + M*N*src)+1) = u1*v1 * a;
+            // fp2 bilinear mapping
+            A.insert(local_start + row+1, 2*(l2   + M * (t2)   + M*N*dst)+1) = -(1-u2)*(1-v2) * a;
+            A.insert(local_start + row+1, 2*(l2+1 + M * (t2)   + M*N*dst)+1) = -u2*(1-v2) * a;
+            A.insert(local_start + row+1, 2*(l2 +   M * (t2+1) + M*N*dst)+1) = -v2*(1-u2) * a;
+            A.insert(local_start + row+1, 2*(l2+1 + M * (t2+1) + M*N*dst)+1) = -u2*v2 * a;
+            // b should be zero anyway, but for posterity's sake set it to zero
+            b(local_start + row + 1) = 0;
+
+            row+=2;
         }
     }
 
