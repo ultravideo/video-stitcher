@@ -463,11 +463,7 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> &features,
     // Smoothness term from http://web.cecs.pdx.edu/~fliu/papers/cvpr2014-stitching.pdf
     a = sqrt(ALPHAS[2]);
     for (int idx = 0; idx < images.size(); ++idx) {
-        Mat image_mask;
         //don't calculate complete black areas to the saliency (since it will calculate the warped black as an edge)
-        cvtColor(images[idx], image_mask, CV_8UC1);
-        inRange(images[idx], Scalar::all(0), Scalar::all(0), image_mask);
-        bitwise_not(image_mask, image_mask);
         for (int i = 0; i < N-1; ++i) {
             for (int j = 0; j < M-1; ++j) {
                 float x1 = mesh_cpu_x[idx].at<float>(i, j);
@@ -478,28 +474,27 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> &features,
                 float y2 = mesh_cpu_y[idx].at<float>(i+1, j);
                 float y3 = mesh_cpu_y[idx].at<float>(i, j+1);
                 float y4 = mesh_cpu_y[idx].at<float>(i+1, j+1);
-                float dx = x3 - x2;
-                float dy = y3 - y2;
-                float dx2 = x4 - x3;
-                float dy2 = y4 - y3;
-                float u = (dx*x1-dx*x2+dy*y1-dy*y2)/(dx*dx+dy*dy);
-                float v = (-dx*y1+dx*y2+x1*dy-x2*dy)/(dx*dx+dy*dy);
-                float u2 = (dx2*x2-dx2*x3+dy2*y2-dy2*y3)/(dx2*dx2+dy2*dy2);
-                float v2 = (-dx2*y2+dx2*y3+x2*dy2-x3*dy2)/(dx2*dx2+dy2*dy2);
+
+                // Calculated from equation [6] http://web.cecs.pdx.edu/~fliu/papers/cvpr2014-stitching.pdf
+                // Vn is in code [xn, yn]
+                float u = (-x1*y2+x1*y3-x2*y1+2*x2*y2-x2*y3+x3*y1-x3*y2)/(2*(x2-x3)*(y2-y3));
+                float v = (x1*y2-x1*y3-x2*y1+x2*y3+x3*y1-x3*y2)/(2*(x2-x3)*(y2-y3));
 
                 float sal; // Salience of the triangle. Using 0.5f + l2-norm of color values of the triangle
-
                 Mat mask(images[idx].rows, images[idx].cols, CV_8UC1);
                 mask.setTo(Scalar::all(0));
                 Point pts[3] = { Point(x1, y1), Point(x1, y2), Point(x3, y1) };
                 fillConvexPoly(mask, pts, 3, Scalar(255));
-                bitwise_and(image_mask, mask, mask);
 
                 Mat mean;
                 Mat deviation;
+
+
+                // meanstdDev is a very slow operation. Make it faster
                 meanStdDev(images[idx], mean, deviation, mask);
                 Mat variance;
                 pow(deviation, 2, variance);
+                // sqrt(var + 0.5f), since |sqrt(var + 0.5f) * smoothness|^2 == (var + 0.5f) * |smoothness|^2 
                 sal = sqrt(norm(variance, NORM_L2) + 0.5f);
 
                 A.insert(smooth_start + row,   2*(j + M * i + M*N*idx)) = a * sal; // x1
@@ -509,14 +504,8 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> &features,
                 A.insert(smooth_start + row,   2*(j+1 + M * i + M*N*idx)) = a*(-u + v) * sal; // x3
                 A.insert(smooth_start + row,   2*(j+1 + M * i + M*N*idx) + 1) = a*(-u - v) * sal; // y3
 
-                mask.setTo(Scalar::all(0));
-                Point pts2[3] = { Point(x1, y2), Point(x3, y2), Point(x3, y1) };
-                fillConvexPoly(mask, pts2, 3, Scalar(255));
-                bitwise_and(image_mask, mask, mask);
-
-                meanStdDev(images[idx], mean, deviation, mask);
-                pow(deviation, 2, variance);
-                sal = sqrt(norm(variance, NORM_L2) + 0.5f);
+                // b should be zero anyway, but for posterity's sake set it to zero
+                b(local_start + row + 1) = 0;
 
                 A.insert(smooth_start + row + 1,   2*(j + M * i + M*N*idx)) = a * sal; // x1
                 A.insert(smooth_start + row + 1,   2*(j + M * i + M*N*idx) + 1) = a * sal; // y1
@@ -524,6 +513,9 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> &features,
                 A.insert(smooth_start + row + 1,   2*(j + M * (i+1) + M*N*idx) + 1) = a*(u + v - 1) * sal; // y2
                 A.insert(smooth_start + row + 1,   2*(j+1 + M * i + M*N*idx)) = a*(-u + v) * sal; // x3
                 A.insert(smooth_start + row + 1,   2*(j+1 + M * i + M*N*idx) + 1) = a*(-u - v) * sal; // y3
+
+                // b should be zero anyway, but for posterity's sake set it to zero
+                b(local_start + row + 1) = 0;
                 row += 2;
             }
         }
