@@ -393,7 +393,7 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> &features,
     int features_per_image = MAX_FEATURES_PER_IMAGE;
     // 2 * images.size()*N*M for global alignment, 2*images.size()*(N-1)*(M-1) for smoothness term and
     // 2 * (NUM_IMAGES +(int)wrapAround + 1) * features_per_image for local alignment
-    int num_rows = 2 * static_cast<int>(images.size())*N*M + 2* static_cast<int>(images.size())*(N-1)*(M-1) +
+    int num_rows = 2 * static_cast<int>(images.size())*N*M + 2* static_cast<int>(images.size())*(N-1)*(M-1)*8 +
                    2 * (NUM_IMAGES + (int)wrapAround + 1) * features_per_image;
     Eigen::SparseMatrix<double> A(num_rows, 2*N*M*images.size());
     Eigen::VectorXd b(num_rows);
@@ -402,7 +402,7 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> &features,
 
     int global_start = 0;
     int smooth_start = 2 * static_cast<int>(images.size())*N*M;
-    int local_start = 2 * static_cast<int>(images.size())*N*M + 2* static_cast<int>(images.size())*(N-1)*(M-1);
+    int local_start = 2 * static_cast<int>(images.size())*N*M + 2* static_cast<int>(images.size())*(N-1)*(M-1)*8;
 
 
     vector<int> valid_indexes_orig_all[NUM_IMAGES];
@@ -441,9 +441,9 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> &features,
     for (int img = 0; img < NUM_IMAGES; ++img) {
         vector<int> valid_indexes;
         valid_indexes = valid_indexes_orig_all[img];
+        //Shuffle the index vector on each loop to get random results each time
         std::random_shuffle(valid_indexes.begin(), valid_indexes.end());
 
-        //Shuffle the index vector on each loop to get random results each time
         for (int i = 0; i < min(features_per_image, (int)(valid_indexes.size() * 0.8f)); ++i) {
             int idx = valid_indexes.at(i);
             valid_indexes_selected[img].push_back(idx);
@@ -493,59 +493,137 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> &features,
     a = sqrt(ALPHAS[2]);
     for (int idx = 0; idx < images.size(); ++idx) {
         //don't calculate complete black areas to the saliency (since it will calculate the warped black as an edge)
-        for (int i = 0; i < N-1; ++i) {
-            for (int j = 0; j < M-1; ++j) {
-                float x1 = mesh_cpu_x[idx].at<float>(i, j);
-                float x2 = mesh_cpu_x[idx].at<float>(i+1, j);
-                float x3 = mesh_cpu_x[idx].at<float>(i, j+1);
-                float x4 = mesh_cpu_x[idx].at<float>(i+1, j+1);
-                float y1 = mesh_cpu_y[idx].at<float>(i, j);
-                float y2 = mesh_cpu_y[idx].at<float>(i+1, j);
-                float y3 = mesh_cpu_y[idx].at<float>(i, j+1);
-                float y4 = mesh_cpu_y[idx].at<float>(i+1, j+1);
+        for (int i = 0; i < N; ++i) {
+            for (int j = 0; j < M; ++j) {
+                // Loop through all triangles surrounding vertex (j, i), when the surrounding quads are split in the middle
+                // Left to right, top to bottom order
+                for (int t = 0; t < 8; ++t) {
 
-                // Calculated from equation [6] http://web.cecs.pdx.edu/~fliu/papers/cvpr2014-stitching.pdf
-                // Vn is in code [xn, yn]
-                float u = (-x1*y2+x1*y3-x2*y1+2*x2*y2-x2*y3+x3*y1-x3*y2)/(2*(x2-x3)*(y2-y3));
-                float v = (x1*y2-x1*y3-x2*y1+x2*y3+x3*y1-x3*y2)/(2*(x2-x3)*(y2-y3));
+                    //Indexes of the triangle vertex positions, (0,0) being (j,i) in (x, y) format
+                    Point2i Vi[3];
 
-                float sal; // Salience of the triangle. Using 0.5f + l2-norm of color values of the triangle
-                Mat mask(images[idx].rows, images[idx].cols, CV_8UC1);
-                mask.setTo(Scalar::all(0));
-                Point pts[3] = { Point(x1, y1), Point(x1, y2), Point(x3, y1) };
-                fillConvexPoly(mask, pts, 3, Scalar(255));
+                    switch (t) {
+                    case 0:
+                        Vi[0] = {.x = -1, .y = 0};
+                        Vi[1] = {.x = 0, .y = 0};
+                        Vi[2] = {.x = -1, .y = -1};
+                        break;
+                    case 1:
+                        Vi[0] = {.x = 0, .y = -1};
+                        Vi[1] = {.x = 0, .y = 0};
+                        Vi[2] = {.x = -1, .y = -1};
+                        break;
+                    case 2:
+                        Vi[0] = {.x = 0, .y = -1};
+                        Vi[1] = {.x = 0, .y = 0};
+                        Vi[2] = {.x = 1, .y = -1};
+                        break;
+                    case 3:
+                        Vi[0] = {.x = 1, .y = 0};
+                        Vi[1] = {.x = 0, .y = 0};
+                        Vi[2] = {.x = 1, .y = -1};
+                        break;
+                    case 4:
+                        Vi[0] = {.x = -1, .y = 0};
+                        Vi[1] = {.x = 0, .y = 0};
+                        Vi[2] = {.x = -1, .y = 1};
+                        break;
+                    case 5:
+                        Vi[0] = {.x = 0, .y = 1};
+                        Vi[1] = {.x = 0, .y = 0};
+                        Vi[2] = {.x = -1, .y = 1};
+                        break;
+                    case 6:
+                        Vi[0] = {.x = 0, .y = 1};
+                        Vi[1] = {.x = 0, .y = 0};
+                        Vi[2] = {.x = 1, .y = 1};
+                        break;
+                    case 7:
+                        Vi[0] = {.x = 1, .y = 0};
+                        Vi[1] = {.x = 0, .y = 0};
+                        Vi[2] = {.x = 1, .y = 1};
+                        break;
+                    default:
+                        break;
+                    }
 
-                Mat mean;
-                Mat deviation;
+                    Point2i offset = {.x = j, .y = i};
+
+                    Point2i Vi_total[3];
+                    Vi_total[0] = offset + Vi[0];
+                    Vi_total[1] = offset + Vi[1];
+                    Vi_total[2] = offset + Vi[2];
+
+                    bool out_of_bounds = false;
+                    for (int v = 0; v < 3; ++v) {
+                        if (Vi_total[v].x < 0 || Vi_total[v].y < 0 || Vi_total[v].x >= M || Vi_total[v].y >= N) {
+                            out_of_bounds = true;
+                            break;
+                        }
+                    }
+                    if (out_of_bounds)
+                        continue;
+
+                    float V1x = mesh_cpu_x[idx].at<float>(i + Vi[0].y, j + Vi[0].x);
+                    float V2x = mesh_cpu_x[idx].at<float>(i + Vi[1].y, j + Vi[1].x);
+                    float V3x = mesh_cpu_x[idx].at<float>(i + Vi[2].y, j + Vi[2].x);
+
+                    float V1y = mesh_cpu_y[idx].at<float>(i + Vi[0].y, j + Vi[0].x);
+                    float V2y = mesh_cpu_y[idx].at<float>(i + Vi[1].y, j + Vi[1].x);
+                    float V3y = mesh_cpu_y[idx].at<float>(i + Vi[2].y, j + Vi[2].x);
+
+                    float x1 = V1x;
+                    float x2 = V2x;
+                    float x3 = V3x;
+                    float y1 = V1y;
+                    float y2 = V2y;
+                    float y3 = V3y;
+
+                    // Calculated from equation [6] http://web.cecs.pdx.edu/~fliu/papers/cvpr2014-stitching.pdf
+                    // Vn is in code [xn, yn]
+                    float u = (-x1*y2+x1*y3-x2*y1+2*x2*y2-x2*y3+x3*y1-x3*y2)/(2*(x2-x3)*(y2-y3));
+                    float v = (x1*y2-x1*y3-x2*y1+x2*y3+x3*y1-x3*y2)/(2*(x2-x3)*(y2-y3));
 
 
-                // meanstdDev is a very slow operation. Make it faster
-                meanStdDev(images[idx], mean, deviation, mask);
-                Mat variance;
-                pow(deviation, 2, variance);
-                // sqrt(var + 0.5f), since |sqrt(var + 0.5f) * smoothness|^2 == (var + 0.5f) * |smoothness|^2 
-                sal = sqrt(norm(variance, NORM_L2) + 0.5f);
+                    float sal; // Salience of the triangle. Using 0.5f + l2-norm of color values of the triangle
+                    Mat mask(images[idx].rows, images[idx].cols, CV_8UC1);
+                    mask.setTo(Scalar::all(0));
+                    Point pts[3] = { Point(V1x, V1y), Point(V2x, V2y), Point(V3x, V3y) };
+                    fillConvexPoly(mask, pts, 3, Scalar(255));
 
-                A.insert(smooth_start + row,   2*(j + M * i + M*N*idx)) = a * sal; // x1
-                A.insert(smooth_start + row,   2*(j + M * i + M*N*idx) + 1) = a * sal; // y1
-                A.insert(smooth_start + row,   2*(j + M * (i+1) + M*N*idx)) = a*(u - v - 1) * sal; // x2
-                A.insert(smooth_start + row,   2*(j + M * (i+1) + M*N*idx) + 1) = a*(u + v - 1) * sal; // y2
-                A.insert(smooth_start + row,   2*(j+1 + M * i + M*N*idx)) = a*(-u + v) * sal; // x3
-                A.insert(smooth_start + row,   2*(j+1 + M * i + M*N*idx) + 1) = a*(-u - v) * sal; // y3
+                    Mat mean;
+                    Mat deviation;
 
-                // b should be zero anyway, but for posterity's sake set it to zero
-                b(local_start + row + 1) = 0;
+                    // meanstdDev is a very slow operation. Make it faster
+                    meanStdDev(images[idx], mean, deviation, mask);
+                    Mat variance;
+                    pow(deviation, 2, variance);
+                    sal = sqrt(norm(variance, NORM_L2) + 0.5f);
 
-                A.insert(smooth_start + row + 1,   2*(j + M * i + M*N*idx)) = a * sal; // x1
-                A.insert(smooth_start + row + 1,   2*(j + M * i + M*N*idx) + 1) = a * sal; // y1
-                A.insert(smooth_start + row + 1,   2*(j + M * (i+1) + M*N*idx)) = a*(u - v - 1) * sal; // x2
-                A.insert(smooth_start + row + 1,   2*(j + M * (i+1) + M*N*idx) + 1) = a*(u + v - 1) * sal; // y2
-                A.insert(smooth_start + row + 1,   2*(j+1 + M * i + M*N*idx)) = a*(-u + v) * sal; // x3
-                A.insert(smooth_start + row + 1,   2*(j+1 + M * i + M*N*idx) + 1) = a*(-u - v) * sal; // y3
 
-                // b should be zero anyway, but for posterity's sake set it to zero
-                b(local_start + row + 1) = 0;
-                row += 2;
+
+                    A.insert(smooth_start + row,   2*((j + Vi[0].x) + M * (i + Vi[0].y) + M*N*idx)) = a * sal; // x1
+                    A.insert(smooth_start + row,   2*((j + Vi[0].x) + M * (i + Vi[0].y) + M*N*idx) + 1) = a * sal; // y1
+                    A.insert(smooth_start + row,   2*((j + Vi[1].x) + M * (i + Vi[1].y) + M*N*idx)) = a*(u - v - 1) * sal; // x2
+                    A.insert(smooth_start + row,   2*((j + Vi[1].x) + M * (i + Vi[1].y) + M*N*idx) + 1) = a*(u + v - 1) * sal; // y2
+                    A.insert(smooth_start + row,   2*((j + Vi[2].x) + M * (i + Vi[2].y) + M*N*idx)) = a*(-u + v) * sal; // x3
+                    A.insert(smooth_start + row,   2*((j + Vi[2].x) + M * (i + Vi[2].y) + M*N*idx) + 1) = a*(-u - v) * sal; // y3
+
+                    // b should be zero anyway, but for posterity's sake set it to zero
+                    b(smooth_start + row) = 0;
+
+
+                    A.insert(smooth_start + row + 1,   2*((j + Vi[0].x) + M * (i + Vi[0].y) + M*N*idx)) = a * sal; // x1
+                    A.insert(smooth_start + row + 1,   2*((j + Vi[0].x) + M * (i + Vi[0].y) + M*N*idx) + 1) = a * sal; // y1
+                    A.insert(smooth_start + row + 1,   2*((j + Vi[1].x) + M * (i + Vi[1].y) + M*N*idx)) = a*(u - v - 1) * sal; // x2
+                    A.insert(smooth_start + row + 1,   2*((j + Vi[1].x) + M * (i + Vi[1].y) + M*N*idx) + 1) = a*(u + v - 1) * sal; // y2
+                    A.insert(smooth_start + row + 1,   2*((j + Vi[2].x) + M * (i + Vi[2].y) + M*N*idx)) = a*(-u + v) * sal; // x3
+                    A.insert(smooth_start + row + 1,   2*((j + Vi[2].x) + M * (i + Vi[2].y) + M*N*idx) + 1) = a*(-u - v) * sal; // y3
+
+                    // b should be zero anyway, but for posterity's sake set it to zero
+                    b(smooth_start + row + 1) = 0;
+                    row += 2;
+                }
             }
         }
     }
