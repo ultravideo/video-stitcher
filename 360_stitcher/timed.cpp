@@ -361,7 +361,10 @@ void consume(BlockingQueue<cuda::GpuMat> &results)
 		++frame_counter;
 		if (frame_counter == 30) {
 			tp2 = std::chrono::high_resolution_clock::now();
-			LOGLN("delta time 30 frames: " << std::chrono::duration_cast<std::chrono::milliseconds>(tp2 - tp).count() << " ms");
+            float delta_time = static_cast<float>(std::chrono::duration_cast<std::chrono::milliseconds>(tp2 - tp).count());
+            float fps = 30.0f / (delta_time / 1000.0f);
+			LOGLN("delta time 30 frames: " << delta_time << " fps: " << fps << " ms");
+            std::chrono::duration_cast<std::chrono::milliseconds>(tp2 - tp).count();
 			frame_counter = 0;
 			tp = std::chrono::high_resolution_clock::now();
 		}
