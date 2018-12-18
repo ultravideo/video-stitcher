@@ -36,6 +36,7 @@
 #include "netlib.h"
 #include "blockingqueue.h"
 #include "calibration.h"
+#include "meshwarp.h"
 
 const int TIMES = 5;
 std::chrono::high_resolution_clock::time_point times[TIMES];
@@ -520,7 +521,7 @@ int main(int argc, char* argv[])
 
 		if (frame_amt && (frame_amt % RECALIB_DEL == 0) && recalibrate) {
 			int64 t = getTickCount();
-			recalibrateMesh(input, x_maps, y_maps, x_mesh, y_mesh, cameras[0].focal, compose_scale, work_scale);
+            meshwarp::recalibrateMesh(input, x_maps, y_maps, x_mesh, y_mesh, cameras[0].focal, compose_scale, work_scale);
 			LOGLN("Rewarp: " << (getTickCount() - t) * 1000 / getTickFrequency());
 		}
 

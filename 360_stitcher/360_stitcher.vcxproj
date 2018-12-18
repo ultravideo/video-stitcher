@@ -141,6 +141,8 @@
     <ClCompile Include="debug.cpp" />
     <ClCompile Include="networking.cpp" />
     <ClCompile Include="timed.cpp" />
+    <ClCompile Include="meshwarp.cpp" />
+    <ClCompile Include="featurefinder.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="blockingqueue.h" />
@@ -148,6 +150,8 @@
     <ClInclude Include="debug.h" />
     <ClInclude Include="defs.h" />
     <ClInclude Include="networking.h" />
+    <ClCompile Include="meshwarp.h" />
+    <ClCompile Include="featurefinder.h" />
   </ItemGroup>
   <ItemGroup>
     <CudaCompile Include="resize.cu">
