@@ -25,7 +25,7 @@ using std::vector;
 
 void findFeatures(vector<Mat> &full_img, vector<ImageFeatures> &features,
                   const double &work_scale) {
-    Ptr<cuda::ORB> d_orb = cuda::ORB::create(1500, 1.2f, 8);
+    Ptr<cuda::ORB> d_orb = cuda::ORB::create(2500, 1.2f, 8);
     Ptr<SurfFeaturesFinderGpu> surf = makePtr<SurfFeaturesFinderGpu>(HESS_THRESH, NOCTAVES, NOCTAVESLAYERS);
     Mat image;
     cuda::GpuMat gpu_img;
@@ -72,8 +72,8 @@ void matchFeatures(vector<ImageFeatures> &features, vector<MatchesInfo> &pairwis
 
     // Match features
     for (int i = 0; i < pairwise_matches.size(); ++i) {
-        int idx1 = (i + 1 == NUM_IMAGES) ? i-1 : i;
-        int idx2 = (i + 1 == NUM_IMAGES) ? 0 : i+1;
+        int idx1 = (i - 1 == -1) ? i : i;
+        int idx2 = (i - 1 == -1) ? NUM_IMAGES - 1 : i-1;
         pairwise_matches[i].src_img_idx = idx1;
         pairwise_matches[i].dst_img_idx = idx2;
         ImageFeatures f1 = features[idx1];
@@ -411,9 +411,9 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> &features,
     // Select all matches that fit criteria
     for (int idx = 0; idx < pairwise_matches.size(); ++idx) {
         MatchesInfo &pw_matches = pairwise_matches[idx];
-        if (!pw_matches.matches.size() || !pw_matches.num_inliers) continue;
         int src = pw_matches.src_img_idx;
         int dst = pw_matches.dst_img_idx;
+        if (!pw_matches.matches.size() || !pw_matches.num_inliers) continue;
 
         if (dst != NUM_IMAGES - 1 || src != 0 && dst == 5) {
             // Only calculate loss from pairs of src and dst where src = dst - 1
@@ -421,6 +421,11 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> &features,
             if (abs(src - dst - 1) > 0.1) {
                 continue;
             }
+        }
+        if (VISUALIZE_MATCHES) {
+            Mat out;
+            drawMatches(images[src], features[src].keypoints, images[dst], features[dst].keypoints, pw_matches.matches, out);
+            imshow("matches", out);
         }
 
 		//Find all indexes of the inliers_mask that contain the value 1
