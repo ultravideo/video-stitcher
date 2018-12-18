@@ -552,12 +552,12 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> &features,
                         break;
                     }
 
-                    Point2i offset = {.x = j, .y = i};
+                    Point2i vertex_offset = {.x = j, .y = i};
 
                     Point2i Vi_total[3];
-                    Vi_total[0] = offset + Vi[0];
-                    Vi_total[1] = offset + Vi[1];
-                    Vi_total[2] = offset + Vi[2];
+                    Vi_total[0] = vertex_offset + Vi[0];
+                    Vi_total[1] = vertex_offset + Vi[1];
+                    Vi_total[2] = vertex_offset + Vi[2];
 
                     bool out_of_bounds = false;
                     for (int v = 0; v < 3; ++v) {
@@ -569,13 +569,13 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> &features,
                     if (out_of_bounds)
                         continue;
 
-                    float V1x = mesh_cpu_x[idx].at<float>(i + Vi[0].y, j + Vi[0].x);
-                    float V2x = mesh_cpu_x[idx].at<float>(i + Vi[1].y, j + Vi[1].x);
-                    float V3x = mesh_cpu_x[idx].at<float>(i + Vi[2].y, j + Vi[2].x);
+                    float V1x = mesh_cpu_x[idx].at<float>(Vi_total[0].y, Vi_total[0].x);
+                    float V2x = mesh_cpu_x[idx].at<float>(Vi_total[1].y, Vi_total[1].x);
+                    float V3x = mesh_cpu_x[idx].at<float>(Vi_total[2].y, Vi_total[2].x);
 
-                    float V1y = mesh_cpu_y[idx].at<float>(i + Vi[0].y, j + Vi[0].x);
-                    float V2y = mesh_cpu_y[idx].at<float>(i + Vi[1].y, j + Vi[1].x);
-                    float V3y = mesh_cpu_y[idx].at<float>(i + Vi[2].y, j + Vi[2].x);
+                    float V1y = mesh_cpu_y[idx].at<float>(Vi_total[0].y, Vi_total[0].x);
+                    float V2y = mesh_cpu_y[idx].at<float>(Vi_total[1].y, Vi_total[1].x);
+                    float V3y = mesh_cpu_y[idx].at<float>(Vi_total[2].y, Vi_total[2].x);
 
                     float x1 = V1x;
                     float x2 = V2x;
@@ -724,8 +724,8 @@ void calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> &features,
             }
 
             if(VISUALIZE_MATCHES) {
-                circle(images[src], Point(x1_, y1_), 3, Scalar(0, 255, 0), 3);
-                circle(images[dst], Point(x2_, y2_), 3, Scalar(0, 0, 255), 3);
+                circle(images[src], Point(x1_, y1_), 3, Scalar(0, 255, 0), 2);
+                circle(images[dst], Point(x2_, y2_), 3, Scalar(0, 0, 255), 2);
                 imshow(std::to_string(src), images[src]);
                 imshow(std::to_string(dst), images[dst]);
                 waitKey(0);
