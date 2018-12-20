@@ -10,6 +10,12 @@
 
 extern void custom_resize(cv::cuda::GpuMat &in, cv::cuda::GpuMat &out, cv::Size t_size);
 namespace meshwarp {
+    // dst is the image id of matches train image
+    typedef struct matchWithDst {
+        cv::DMatch match;
+        int dst;
+    } matchWithDst_t;
+
     void calibrateMeshWarp(std::vector<cv::Mat> &full_imgs, std::vector<cv::detail::ImageFeatures> &features,
                            std::vector<cv::detail::MatchesInfo> &pairwise_matches,
                            std::vector<cv::cuda::GpuMat> &x_mesh, std::vector<cv::cuda::GpuMat> &y_mesh,

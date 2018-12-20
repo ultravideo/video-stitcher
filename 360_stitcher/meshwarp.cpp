@@ -60,8 +60,7 @@ void meshwarp::calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> &
     int local_start = 2 * static_cast<int>(images.size())*N*M + 2* static_cast<int>(images.size())*(N-1)*(M-1)*8;
 
 
-    vector<int> valid_indexes_orig_all[NUM_IMAGES];
-    vector<DMatch> all_matches[NUM_IMAGES];
+    vector<matchWithDst_t> all_matches[NUM_IMAGES];
 
     // Select all matches that fit criteria
     for (int idx = 0; idx < pairwise_matches.size(); ++idx) {
@@ -86,29 +85,20 @@ void meshwarp::calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> &
         //Find all indexes of the inliers_mask that contain the value 1
         for (int i = 0; i < pw_matches.inliers_mask.size(); ++i) {
             if (pw_matches.inliers_mask[i]) {
-                valid_indexes_orig_all[src].push_back(i);
-                DMatch match = pw_matches.matches[i];
+                matchWithDst_t match = { pw_matches.matches[i], pw_matches.dst_img_idx };
                 all_matches[src].push_back(match);
             }
         }
     }
 
 
-    vector<int> valid_indexes_selected[NUM_IMAGES];
-    vector<DMatch> selected_matches[NUM_IMAGES];
+    vector<matchWithDst_t> selected_matches[NUM_IMAGES];
 
     // Select features_per_image amount of random features points from valid_indexes_orig_all
     for (int img = 0; img < NUM_IMAGES; ++img) {
-        vector<int> valid_indexes;
-        valid_indexes = valid_indexes_orig_all[img];
-        //Shuffle the index vector on each loop to get random results each time
-        std::random_shuffle(valid_indexes.begin(), valid_indexes.end());
-
-        for (int i = 0; i < min(features_per_image, (int)(valid_indexes.size() * 0.8f)); ++i) {
-            int idx = valid_indexes.at(i);
-            valid_indexes_selected[img].push_back(idx);
-
-            DMatch match = all_matches[img].at(i);
+        std::random_shuffle(all_matches[img].begin(), all_matches[img].end());
+        for (int i = 0; i < min(features_per_image, (int)(all_matches[img].size() * 0.8f)); ++i) {
+            matchWithDst_t match = all_matches[img].at(i);
             selected_matches[img].push_back(match);
         }
     }
@@ -128,7 +118,7 @@ void meshwarp::calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> &
                 float tau = 1;
 
                 for (int ft = 0; ft < selected_matches[idx].size(); ++ft) {
-                    int ft_id = selected_matches[idx][ft].queryIdx;
+                    int ft_id = selected_matches[idx][ft].match.queryIdx;
                     Point ft_point = features[idx].keypoints[ft_id].pt;
                     if (sqrt(pow(ft_point.x - x1, 2) + pow(ft_point.y - y1, 2)) < GLOBAL_DIST) {
                         tau = 0;
@@ -310,31 +300,18 @@ void meshwarp::calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> &
     row = 0;
     float f = focal_length;
     a = sqrt(ALPHAS[0]);
-    vector<int> valid_indexes_orig;
-    vector<int> valid_indexes;
-    for (int idx = 0; idx < pairwise_matches.size(); ++idx) {
-        MatchesInfo &pw_matches = pairwise_matches[idx];
-        if (!pw_matches.matches.size() || !pw_matches.num_inliers) continue;
-        int src = pw_matches.src_img_idx;
-        int dst = pw_matches.dst_img_idx;
+    for (int idx = 0; idx < NUM_IMAGES; ++idx) {
+        for (int m = 0; m < selected_matches[idx].size(); ++m) {
+            matchWithDst_t matchWDst = selected_matches[idx].at(m);
+            DMatch match = selected_matches[idx].at(m).match;
 
-        valid_indexes_orig = valid_indexes_selected[src];
-        if (dst != NUM_IMAGES - 1 || src != 0) {
-            // Only calculate loss from pairs of src and dst where src = dst - 1
-            // to avoid using same pairs multiple times
-            if (abs(src - dst - 1) > 0.1) {
-                continue;
-            }
-        }
 
-        valid_indexes = valid_indexes_orig;
-        for(int i = 0; i < valid_indexes.size(); ++i) {
-            int idx = valid_indexes.at(i);
+            int queryIdx = match.queryIdx;
+            int trainIdx = match.trainIdx;
 
-            int idx1 = pw_matches.matches[idx].queryIdx;
-            int idx2 = pw_matches.matches[idx].trainIdx;
-            KeyPoint k1 = features[src].keypoints[idx1];
-            KeyPoint k2 = features[dst].keypoints[idx2];
+
+            int src = idx;
+            int dst = matchWDst.dst;
 
             float h1 = features[src].img_size.height;
             float w1 = features[src].img_size.width;
@@ -355,8 +332,8 @@ void meshwarp::calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> &
             }
 
             theta *= 2 * PI / 6;
-            Point2f p1 = features[src].keypoints[idx1].pt;
-            Point2f p2 = features[dst].keypoints[idx2].pt;
+            Point2f p1 = features[src].keypoints[queryIdx].pt;
+            Point2f p2 = features[dst].keypoints[trainIdx].pt;
 
             float scale = compose_scale / work_scale;
 
