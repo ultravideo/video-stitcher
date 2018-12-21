@@ -27,7 +27,7 @@
     <ClCompile Include="debug.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="meshwarp.cpp">
+    <ClCompile Include="meshwarper.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="featurefinder.cpp">
@@ -50,7 +50,7 @@
     <ClInclude Include="debug.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="meshwarp.h">
+    <ClInclude Include="meshwarper.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="featurefinder.h">

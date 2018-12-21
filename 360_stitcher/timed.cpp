@@ -6,6 +6,7 @@
 #include <limits>
 #include <iostream>
 #include <string>
+#include <memory>
 #include <kvazaar.h>
 
 #include "opencv2/opencv_modules.hpp"
@@ -36,7 +37,7 @@
 #include "netlib.h"
 #include "blockingqueue.h"
 #include "calibration.h"
-#include "meshwarp.h"
+#include "meshwarper.h"
 
 const int TIMES = 5;
 std::chrono::high_resolution_clock::time_point times[TIMES];
@@ -479,10 +480,11 @@ int main(int argc, char* argv[])
 		return -1;
 	}
 
+    std::shared_ptr<MeshWarper> mw;
 	int64 start = getTickCount();
 	if (!stitch_calib(full_img, cameras, x_maps, y_maps, x_mesh, y_mesh, work_scale, seam_scale,
 		seam_work_aspect, compose_scale, blender, compensator, warped_image_scale,
-		blend_width, full_img_size))
+		blend_width, full_img_size, mw))
 	{
 		LOGLN("");
 		LOGLN("Calibration failed!");
@@ -521,7 +523,8 @@ int main(int argc, char* argv[])
 
 		if (frame_amt && (frame_amt % RECALIB_DEL == 0) && recalibrate) {
 			int64 t = getTickCount();
-            meshwarp::recalibrateMesh(input, x_maps, y_maps, x_mesh, y_mesh, cameras[0].focal, compose_scale, work_scale);
+            if (mw != nullptr)
+                mw->recalibrateMesh(input, x_maps, y_maps, x_mesh, y_mesh);
 			LOGLN("Rewarp: " << (getTickCount() - t) * 1000 / getTickFrequency());
 		}
 

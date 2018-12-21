@@ -1,6 +1,7 @@
 #include "calibration.h"
-#include "meshwarp.h"
+#include "meshwarper.h"
 #include <algorithm>
+#include <memory>
 
 #include "opencv2/imgproc.hpp"
 #include "opencv2/highgui.hpp"
@@ -251,7 +252,7 @@ bool stitch_calib(vector<Mat> full_img, vector<CameraParams> &cameras, vector<cu
                   vector<cuda::GpuMat> &y_maps, vector<cuda::GpuMat> &x_mesh, vector<cuda::GpuMat> &y_mesh,
                   double &work_scale, double &seam_scale, double &seam_work_aspect, double &compose_scale,
                   Ptr<Blender> &blender, Ptr<ExposureCompensator> compensator, float &warped_image_scale,
-                  float &blend_width, Size &full_img_size)
+                  float &blend_width, Size &full_img_size, std::shared_ptr<MeshWarper> &mw)
 {
     // STEP 1: reading images, feature finding and matching // ------------------------------------------------------------------
 
@@ -295,8 +296,9 @@ bool stitch_calib(vector<Mat> full_img, vector<CameraParams> &cameras, vector<cu
                warped_image_scale, blend_width);
 
     if (enable_local) {
-        meshwarp::calibrateMeshWarp(full_img, features, pairwise_matches, x_mesh, y_mesh,
-                          x_maps, y_maps, cameras[0].focal, compose_scale, work_scale);
+        mw.reset(new MeshWarper(full_img.size(), MESH_WIDTH, MESH_HEIGHT, cameras[0].focal, compose_scale, work_scale));
+        mw->calibrateMeshWarp(full_img, features, pairwise_matches, x_mesh, y_mesh,
+                          x_maps, y_maps);
         MultiBandBlender* mb = dynamic_cast<MultiBandBlender*>(blender.get());
         cuda::Stream stream;
         for (int i = 0; i < full_img.size(); ++i) {

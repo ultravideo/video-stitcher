@@ -57,8 +57,8 @@ const int NOCTAVESLAYERS = 2;
 const int MAX_FEATURES_PER_IMAGE = 100;
 const bool VISUALIZE_MATCHES = false; // Draw the meshes and matches to images pre mesh warp
 const bool VISUALIZE_WARPED = false; // Draw the warped mesh
-const int N = 10;
-const int M = 10;
+const int MESH_HEIGHT = 10;
+const int MESH_WIDTH = 10;
 // Alphas are weights for different cost functions
 // 0: Local alignment, 1: Global alignment, 2: Smoothness
 const float ALPHAS[3] = {1.0f, 0.01f, 0.00005f};
