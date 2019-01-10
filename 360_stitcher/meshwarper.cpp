@@ -310,54 +310,72 @@ void MeshWarper::calcSmoothnessTerm(int &row, const cv::Mat &image,
                 float V2y = Vi_total[1].y * (height / (N - 1));
                 float V3y = Vi_total[2].y * (height / (N - 1));
 
-
-                float x1 = V1x;
-                float x2 = V2x;
-                float x3 = V3x;
-                float y1 = V1y;
-                float y2 = V2y;
-                float y3 = V3y;
-
                 // Calculated from equation [6] http://web.cecs.pdx.edu/~fliu/papers/cvpr2014-stitching.pdf
-                // Vn is in code [xn, yn]
-                float u = (-x1*y2+x1*y3-x2*y1+2*x2*y2-x2*y3+x3*y1-x3*y2)/(2*(x2-x3)*(y2-y3));
-                float v = (x1*y2-x1*y3-x2*y1+x2*y3+x3*y1-x3*y2)/(2*(x2-x3)*(y2-y3));
+                // Vn in paper is in code [xn, yn]
+                float u = (-V1x*V2y+V1x*V3y-V2x*V1y+2*V2x*V2y-V2x*V3y+V3x*V1y-V3x*V2y)/(2*(V2x-V3x)*(V2y-V3y));
+                float v = (V1x*V2y-V1x*V3y-V2x*V1y+V2x*V3y+V3x*V1y-V3x*V2y)/(2*(V2x-V3x)*(V2y-V3y));
+                float cell_width = (width / (M - 1));
+                float cell_height = (height / (N - 1));
 
+
+                Point2i Vi_rel[3] = Vi;
+
+                int min_v_x = min(min(Vi[0].x, Vi[1].x), Vi[2].x);
+                int min_v_y = min(min(Vi[0].y, Vi[1].y), Vi[2].y);
+
+                if (min_v_x < 0) {
+                    for (int v = 0; v < 3; ++v) {
+                        Vi_rel[v].x++;
+                    }
+                }
+                if (min_v_y < 0) {
+                    for (int v = 0; v < 3; ++v) {
+                        Vi_rel[v].y++;
+                    }
+                }
 
                 float sal; // Salience of the triangle. Using 0.5f + l2-norm of color values of the triangle
-                Mat mask(mesh_size.height, mesh_size.width, CV_8UC1);
+                Mat mask(cell_height, cell_width, CV_8UC1);
                 mask.setTo(Scalar::all(0));
-                Point pts[3] = { Point(V1x, V1y), Point(V2x, V2y), Point(V3x, V3y) };
+                Point pts[3];
+                pts[0] = Point(Vi_rel[0].x * cell_width, Vi_rel[0].y * cell_height);
+                pts[1] = Point(Vi_rel[1].x * cell_width, Vi_rel[1].y * cell_height);
+                pts[2] = Point(Vi_rel[2].x * cell_width, Vi_rel[2].y * cell_height);
                 fillConvexPoly(mask, pts, 3, Scalar(255));
 
                 Mat mean;
                 Mat deviation;
 
-                // TODO: meanstdDev is a very slow operation. Make it faster
-                meanStdDev(image, mean, deviation, mask);
+                Rect crop;
+                crop.x = min(min(V1x, V2x), V3x);
+                crop.y = min(min(V1y, V2y), V3y);
+                crop.width = cell_width;
+                crop.height = cell_height;
+
+                meanStdDev(image(crop), mean, deviation, mask);
                 Mat variance;
                 pow(deviation, 2, variance);
                 sal = sqrt(norm(variance, NORM_L2) + 0.5f);
 
 
 
-                A.insert(row,   2*((j + Vi[0].x) + M * (i + Vi[0].y) + M*N*idx)) = a * sal; // x1
-                A.insert(row,   2*((j + Vi[0].x) + M * (i + Vi[0].y) + M*N*idx) + 1) = a * sal; // y1
-                A.insert(row,   2*((j + Vi[1].x) + M * (i + Vi[1].y) + M*N*idx)) = a*(u - v - 1) * sal; // x2
-                A.insert(row,   2*((j + Vi[1].x) + M * (i + Vi[1].y) + M*N*idx) + 1) = a*(u + v - 1) * sal; // y2
-                A.insert(row,   2*((j + Vi[2].x) + M * (i + Vi[2].y) + M*N*idx)) = a*(-u + v) * sal; // x3
-                A.insert(row,   2*((j + Vi[2].x) + M * (i + Vi[2].y) + M*N*idx) + 1) = a*(-u - v) * sal; // y3
+                A.insert(row,   2*((Vi_total[0].x) + M * (Vi_total[0].y) + M*N*idx)) = a * sal;
+                A.insert(row,   2*((Vi_total[0].x) + M * (Vi_total[0].y) + M*N*idx) + 1) = a * sal;
+                A.insert(row,   2*((Vi_total[1].x) + M * (Vi_total[1].y) + M*N*idx)) = a * (u - v - 1) * sal;
+                A.insert(row,   2*((Vi_total[1].x) + M * (Vi_total[1].y) + M*N*idx) + 1) = a * (u + v - 1) * sal;
+                A.insert(row,   2*((Vi_total[2].x) + M * (Vi_total[2].y) + M*N*idx)) = a * (-u + v) * sal;
+                A.insert(row,   2*((Vi_total[2].x) + M * (Vi_total[2].y) + M*N*idx) + 1) = a * (-u - v) * sal;
 
                 // b should be zero anyway, but for posterity's sake set it to zero
                 b(row) = 0;
 
 
-                A.insert(row + 1,   2*((j + Vi[0].x) + M * (i + Vi[0].y) + M*N*idx)) = a * sal; // x1
-                A.insert(row + 1,   2*((j + Vi[0].x) + M * (i + Vi[0].y) + M*N*idx) + 1) = a * sal; // y1
-                A.insert(row + 1,   2*((j + Vi[1].x) + M * (i + Vi[1].y) + M*N*idx)) = a*(u - v - 1) * sal; // x2
-                A.insert(row + 1,   2*((j + Vi[1].x) + M * (i + Vi[1].y) + M*N*idx) + 1) = a*(u + v - 1) * sal; // y2
-                A.insert(row + 1,   2*((j + Vi[2].x) + M * (i + Vi[2].y) + M*N*idx)) = a*(-u + v) * sal; // x3
-                A.insert(row + 1,   2*((j + Vi[2].x) + M * (i + Vi[2].y) + M*N*idx) + 1) = a*(-u - v) * sal; // y3
+                A.insert(row + 1,   2*((Vi_total[0].x) + M * (Vi_total[0].y) + M*N*idx)) = a * sal;
+                A.insert(row + 1,   2*((Vi_total[0].x) + M * (Vi_total[0].y) + M*N*idx) + 1) = a * sal;
+                A.insert(row + 1,   2*((Vi_total[1].x) + M * (Vi_total[1].y) + M*N*idx)) = a * (u - v - 1) * sal;
+                A.insert(row + 1,   2*((Vi_total[1].x) + M * (Vi_total[1].y) + M*N*idx) + 1) = a * (u + v - 1) * sal;
+                A.insert(row + 1,   2*((Vi_total[2].x) + M * (Vi_total[2].y) + M*N*idx)) = a * (-u + v) * sal;
+                A.insert(row + 1,   2*((Vi_total[2].x) + M * (Vi_total[2].y) + M*N*idx) + 1) = a * (-u - v) * sal;
 
                 // b should be zero anyway, but for posterity's sake set it to zero
                 b(row + 1) = 0;
