@@ -172,7 +172,7 @@ void MeshWarper::recalibrateMesh(std::vector<cv::Mat> &full_img, std::vector<cv:
                      std::vector<cv::cuda::GpuMat> &y_mesh)
 {
     vector<ImageFeatures> features(NUM_IMAGES);
-    vector<MatchesInfo> pairwise_matches;
+    vector<MatchesInfo> pairwise_matches(NUM_IMAGES - 1 + (int)wrapAround);
     A.setZero();
     b.fill(0);
 
