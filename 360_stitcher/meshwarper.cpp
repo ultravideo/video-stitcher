@@ -12,6 +12,7 @@ using namespace cv::detail;
 using std::vector;
 extern void custom_resize(cv::cuda::GpuMat &in, cv::cuda::GpuMat &out, cv::Size t_size);
 
+std::mutex mesh_mutex;
 
 MeshWarper::MeshWarper(int num_images, int mesh_width, int mesh_height, 
                        float focal_length, double compose_scale, double work_scale):
@@ -34,27 +35,30 @@ MeshWarper::MeshWarper(int num_images, int mesh_width, int mesh_height,
     b.fill(0);
 }
 
-void MeshWarper::calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> &features,
-                       vector<MatchesInfo> &pairwise_matches, vector<cuda::GpuMat> &x_mesh,
-                       vector<cuda::GpuMat> &y_mesh, vector<cuda::GpuMat> &x_maps,
-                       vector<cuda::GpuMat> &y_maps) {
-    vector<Size> mesh_size(full_imgs.size());
-    vector<Mat> images(full_imgs.size());
-    vector<Mat> mesh_cpu_x(full_imgs.size());
-    vector<Mat> mesh_cpu_y(full_imgs.size());
-    vector<Mat> x_map(full_imgs.size());
-    vector<Mat> y_map(full_imgs.size());
+void MeshWarper::createMesh(std::vector<cv::Mat> &full_imgs, std::vector<cv::detail::ImageFeatures> &features,
+                           std::vector<cv::detail::MatchesInfo> &pairwise_matches,
+                           std::vector<cv::Mat> &mesh_cpu_x, std::vector<cv::Mat> &mesh_cpu_y,
+                           std::vector<cv::cuda::GpuMat> &x_maps, std::vector<cv::cuda::GpuMat> &y_maps,
+                           std::vector<cv::Size> &mesh_size) {
+    A.setZero();
+    b.fill(0);
+    mesh_mutex.lock();
+    int full_imgs_size = full_imgs.size();
+    mesh_mutex.unlock();
+    vector<Mat> images(full_imgs_size);
+    vector<Mat> x_map(full_imgs_size);
+    vector<Mat> y_map(full_imgs_size);
 
-    for (int idx = 0; idx < full_imgs.size(); ++idx) {
+    for (int idx = 0; idx < full_imgs_size; ++idx) {
         mesh_cpu_x[idx] = Mat(N, M, CV_32FC1);
         mesh_cpu_y[idx] = Mat(N, M, CV_32FC1);
+        mesh_mutex.lock();
         resize(full_imgs[idx], images[idx], Size(), compose_scale, compose_scale);
         x_maps[idx].download(x_map[idx]);
         y_maps[idx].download(y_map[idx]);
+        mesh_mutex.unlock();
         remap(images[idx], images[idx], x_map[idx], y_map[idx], INTER_LINEAR);
         mesh_size[idx] = images[idx].size();
-        x_mesh[idx] = cuda::GpuMat(mesh_size[idx], CV_32FC1);
-        y_mesh[idx] = cuda::GpuMat(mesh_size[idx], CV_32FC1);
         for (int i = 0; i < N; ++i) {
             for (int j = 0; j < M; ++j) {
                 mesh_cpu_x[idx].at<float>(i, j) = static_cast<float>(j) * mesh_size[idx].width / (M - 1);
@@ -104,7 +108,10 @@ void MeshWarper::calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures>
 
     // Select features_per_image amount of random features points from all_matches
     for (int img = 0; img < NUM_IMAGES; ++img) {
-        std::random_shuffle(all_matches[img].begin(), all_matches[img].end());
+        std::sort(all_matches[img].begin(), all_matches[img].end(), 
+        [](matchWithDst_t a, matchWithDst_t b){
+            return a.match.distance < b.match.distance;
+        });
         for (int i = 0; i < min(features_per_image, (int)(all_matches[img].size() * 0.8f)); ++i) {
             matchWithDst_t match = all_matches[img].at(i);
             selected_matches[img].push_back(match);
@@ -112,9 +119,8 @@ void MeshWarper::calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures>
     }
 
     vector<Point> selected_points[NUM_IMAGES];
-
     // Convert matchWithDst_t to points, which is needed for the global term
-    for (int idx = 0; idx < images.size(); ++idx) {
+    for (int idx = 0; idx < NUM_IMAGES; ++idx) {
         for (int i = 0; i < selected_matches[idx].size(); ++i) {
             int ft_id = selected_matches[idx].at(i).match.queryIdx;
             Point p = features[idx].keypoints.at(ft_id).pt;
@@ -124,30 +130,13 @@ void MeshWarper::calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures>
 
 
     int rows_used = 0;
-    for (int idx = 0; idx < images.size(); ++idx) {
+    for (int idx = 0; idx < NUM_IMAGES; ++idx) {
+        mesh_mutex.lock();
+        Mat img = images.at(idx);
+        mesh_mutex.unlock();
         calcGlobalTerm(rows_used, selected_points[idx], mesh_size.at(idx), idx);
-        calcSmoothnessTerm(rows_used, images.at(idx), mesh_size.at(idx), idx);
+        calcSmoothnessTerm(rows_used, img, mesh_size.at(idx), idx);
         calcLocalTerm(rows_used, selected_matches[idx], features, idx);
-    }
-
-    // Draw the meshes for visualisation
-    if (VISUALIZE_MATCHES) {
-        for (int idx = 0; idx < NUM_IMAGES; ++idx) {
-            for (int i = 0; i < mesh_cpu_x[idx].rows - 1; ++i) {
-                for (int j = 0; j < mesh_cpu_x[idx].cols; ++j) {
-                    Point start = Point(mesh_cpu_x[idx].at<float>(i, j), mesh_cpu_y[idx].at<float>(i, j));
-                    Point end = Point(mesh_cpu_x[idx].at<float>(i + 1, j), mesh_cpu_y[idx].at<float>(i + 1, j));
-                    line(images[idx], start, end, Scalar(255, 0, 0), 1);
-                }
-            }
-            for (int i = 0; i < mesh_cpu_x[idx].rows; ++i) {
-                for (int j = 0; j < mesh_cpu_x[idx].cols - 1; ++j) {
-                    Point start = Point(mesh_cpu_x[idx].at<float>(i, j), mesh_cpu_y[idx].at<float>(i, j));
-                    Point end = Point(mesh_cpu_x[idx].at<float>(i, j + 1), mesh_cpu_y[idx].at<float>(i, j + 1));
-                    line(images[idx], start, end, Scalar(255, 0, 0), 1);
-                }
-            }
-        }
     }
 
     // LeastSquaresConjudateGradientSolver solves equations that are in format |Ax + b|^2
@@ -155,12 +144,45 @@ void MeshWarper::calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures>
     Eigen::LeastSquaresConjugateGradient<Eigen::SparseMatrix<double>> solver;
     solver.compute(A);
     x = solver.solve(b);
+    for (int idx = 0; idx < NUM_IMAGES; ++idx) {
+        convertVectorToMesh(x, mesh_cpu_x.at(idx), mesh_cpu_y.at(idx), idx);
+    }
+}
 
-    for (int idx = 0; idx < full_imgs.size(); ++idx) {
-        convertVectorToMesh(x, mesh_cpu_x[idx], mesh_cpu_y[idx], idx);
-        convertMeshToMap(mesh_cpu_x[idx], mesh_cpu_y[idx], x_mesh[idx], y_mesh[idx], mesh_size[idx]);
+std::vector<cv::Mat> MeshWarper::interpolateMesh(vector<Mat> &mesh_start, vector<Mat> &mesh_end, float progress)
+{
+    int mesh_count = mesh_start.size();
+    std::vector<cv::Mat> interp_mesh(mesh_count);
+    for (int idx = 0; idx < mesh_count; ++idx) {
+        int rows = mesh_start.at(idx).rows;
+        int cols = mesh_start.at(idx).cols;
+        interp_mesh.at(idx) = Mat(N, M, CV_32FC1);
+        for (int i = 0; i < rows; ++i) {
+            for (int j = 0; j < cols; ++j) {
+                float start = mesh_start.at(idx).at<float>(i, j);
+                float end = mesh_end.at(idx).at<float>(i, j);
+                interp_mesh.at(idx).at<float>(i, j) = (start + (end - start) * progress);
+            }
+        }
+    }
+    return interp_mesh;
+}
+
+void MeshWarper::calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> &features,
+                       vector<MatchesInfo> &pairwise_matches, vector<cuda::GpuMat> &x_mesh,
+                       vector<cuda::GpuMat> &y_mesh, vector<cuda::GpuMat> &x_maps,
+                       vector<cuda::GpuMat> &y_maps) {
+
+    int full_imgs_size = full_imgs.size();
+    vector<Mat> simple_mesh_x(full_imgs_size);
+    vector<Mat> simple_mesh_y(full_imgs_size);
+    vector<Size> mesh_size(full_imgs_size);
+    createMesh(full_imgs, features, pairwise_matches, simple_mesh_x, simple_mesh_y, x_maps, y_maps, mesh_size);
+
+    for (int idx = 0; idx < full_imgs_size; ++idx) {
+        convertMeshToMap(simple_mesh_x[idx], simple_mesh_y[idx], x_mesh[idx], y_mesh[idx], mesh_size[idx]);
         if (VISUALIZE_WARPED) {
-            Mat visualized_mesh = drawMesh(mesh_cpu_x[idx], mesh_cpu_y[idx], mesh_size[idx]);
+            Mat visualized_mesh = drawMesh(simple_mesh_x[idx], simple_mesh_y[idx], mesh_size[idx]);
             imshow(std::to_string(idx), visualized_mesh);
             waitKey();
         }
@@ -173,8 +195,6 @@ void MeshWarper::recalibrateMesh(std::vector<cv::Mat> &full_img, std::vector<cv:
 {
     vector<ImageFeatures> features(NUM_IMAGES);
     vector<MatchesInfo> pairwise_matches(NUM_IMAGES - 1 + (int)wrapAround);
-    A.setZero();
-    b.fill(0);
 
     calibrateMeshWarp(full_img, features, pairwise_matches, x_mesh, y_mesh, x_maps, y_maps);
 }
@@ -588,6 +608,8 @@ void MeshWarper::convertMeshToMap(cv::Mat &mesh_cpu_x, cv::Mat &mesh_cpu_y, cuda
 
     gpu_small_mesh_x.upload(warp_x);
     gpu_small_mesh_y.upload(warp_y);
+    mesh_mutex.lock();
     custom_resize(gpu_small_mesh_x, map_x, mesh_size);
     custom_resize(gpu_small_mesh_y, map_y, mesh_size);
+    mesh_mutex.unlock();
 }

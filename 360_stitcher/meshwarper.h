@@ -4,9 +4,12 @@
 #include "Eigen/IterativeLinearSolvers"
 #include "Eigen/SparseCholesky"
 #include <vector>
+#include <mutex>
 
 
 #include "defs.h"
+
+extern std::mutex mesh_mutex;
 
 class MeshWarper {
 public:
@@ -16,9 +19,22 @@ public:
                            std::vector<cv::cuda::GpuMat> &x_mesh, std::vector<cv::cuda::GpuMat> &y_mesh,
                            std::vector<cv::cuda::GpuMat> &x_maps, std::vector<cv::cuda::GpuMat> &y_maps);
 
+    void createMesh(std::vector<cv::Mat> &full_imgs, std::vector<cv::detail::ImageFeatures> &features,
+                    std::vector<cv::detail::MatchesInfo> &pairwise_matches,
+                    std::vector<cv::Mat> &x_mesh, std::vector<cv::Mat> &y_mesh,
+                    std::vector<cv::cuda::GpuMat> &x_maps, std::vector<cv::cuda::GpuMat> &y_maps,
+                    std::vector<cv::Size> &mesh_size);
+
     void recalibrateMesh(std::vector<cv::Mat> &full_img, std::vector<cv::cuda::GpuMat> &x_maps,
                          std::vector<cv::cuda::GpuMat> &y_maps, std::vector<cv::cuda::GpuMat> &x_mesh,
                          std::vector<cv::cuda::GpuMat> &y_mesh);
+
+    std::vector<cv::Mat> interpolateMesh(std::vector<cv::Mat> &meshes_start, std::vector<cv::Mat> &meshes_end, float progress);
+
+    void convertMeshToMap(cv::Mat &mesh_cpu_x, cv::Mat &mesh_cpu_y,
+                          cv::cuda::GpuMat &map_x, cv::cuda::GpuMat &map_y, cv::Size mesh_size);
+
+
 private:
     // dst is the image id of the matches train image
     typedef struct matchWithDst {
@@ -35,8 +51,6 @@ private:
 
     cv::Mat drawMesh(const cv::Mat &mesh_cpu_x, const cv::Mat &mesh_cpu_y, cv::Size mesh_size);
     void convertVectorToMesh(const Eigen::VectorXd &x, cv::Mat &out_mesh_x, cv::Mat &out_mesh_y, int idx);
-    void convertMeshToMap(cv::Mat &mesh_cpu_x, cv::Mat &mesh_cpu_y,
-                          cv::cuda::GpuMat &map_x, cv::cuda::GpuMat &map_y, cv::Size mesh_size);
 
 
     Eigen::SparseMatrix<double> A; // coefficients

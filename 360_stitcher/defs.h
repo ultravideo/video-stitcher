@@ -23,7 +23,7 @@ const std::string base = "videos/";
 const std::string folder = base + "new";
 const int skip_frames = 135;
 const bool wrapAround = true;
-const bool recalibrate = false;
+const bool recalibrate = true;
 const bool enable_local = true;
 const bool save_video = false;
 const bool show_out = true;
@@ -44,7 +44,7 @@ const unsigned int RESULTS_MAX_SIZE = 0;
 //const int offsets[NUM_IMAGES] = {43, 153, 151, 131, 95, 0}; // new
 const int offsets[NUM_IMAGES] = { -92+134, 30+134, 28+134, 0+134, -40+134, -134+134 }; // test videos
 //const int offsets[NUM_IMAGES] = { 0 }; // dynamic
-const int RECALIB_DEL = 150;
+const int RECALIB_DEL = 10;
 const double WORK_MEGAPIX = 0.6;	//0.6;	//-1			// Megapix parameter is scaled to the number
 const double SEAM_MEAGPIX = 0.01;							// of pixels in full image and this is used
 const double COMPOSE_MEGAPIX = 1.4;	//1.4;	//2.2;	//-1	// as a scaling factor when resizing images
@@ -62,7 +62,7 @@ const int MESH_WIDTH = 10;
 // Alphas are weights for different cost functions
 // 0: Local alignment, 1: Global alignment, 2: Smoothness
 const float ALPHAS[3] = {1.0f, 0.01f, 0.00005f};
-const int GLOBAL_DIST = 50; // Maximum distance from vertex in global warping
+const int GLOBAL_DIST = 20; // Maximum distance from vertex in global warping
 
 // Test material before right videos are obtained from the camera rig
 const std::vector<std::string> video_files = {folder + "/0.mp4", folder + "/1.mp4", folder + "/2.mp4", folder + "/3.mp4", folder + "/4.mp4", folder + "/5.mp4"};
