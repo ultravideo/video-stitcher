@@ -248,8 +248,8 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
 
 // Takes in maps for 3D remapping, compose scale for sizing final panorama, blender and image size.
 // Returns true if all the phases of calibration are successful.
-bool stitch_calib(vector<Mat> full_img, vector<CameraParams> &cameras, vector<cuda::GpuMat> &x_maps,
-                  vector<cuda::GpuMat> &y_maps, vector<cuda::GpuMat> &x_mesh, vector<cuda::GpuMat> &y_mesh,
+bool stitch_calib(LockableVector<Mat> &full_img, vector<CameraParams> &cameras, vector<cuda::GpuMat> &x_maps,
+                  vector<cuda::GpuMat> &y_maps, LockableVector<cuda::GpuMat> &x_mesh, LockableVector<cuda::GpuMat> &y_mesh,
                   double &work_scale, double &seam_scale, double &seam_work_aspect, double &compose_scale,
                   Ptr<Blender> &blender, Ptr<ExposureCompensator> compensator, float &warped_image_scale,
                   float &blend_width, Size &full_img_size, std::shared_ptr<MeshWarper> &mw)

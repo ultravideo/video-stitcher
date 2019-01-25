@@ -56,6 +56,9 @@
     <ClInclude Include="featurefinder.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="lockablevector.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <CudaCompile Include="resize.cu">

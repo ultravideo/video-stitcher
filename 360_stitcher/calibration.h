@@ -10,6 +10,7 @@
 
 #include "meshwarper.h"
 #include "defs.h"
+#include "lockablevector.h"
 
 extern void custom_resize(cv::cuda::GpuMat &in, cv::cuda::GpuMat &out, cv::Size t_size);
 
@@ -24,9 +25,9 @@ void warpImages(std::vector<cv::Mat> full_img, cv::Size full_img_size,
                 std::vector<cv::cuda::GpuMat> &y_maps, double &compose_scale,
                 float &warped_image_scale, float &blend_width);
 
-bool stitch_calib(std::vector<cv::Mat> full_img, std::vector<cv::detail::CameraParams> &cameras,
+bool stitch_calib(LockableVector<cv::Mat> &full_img, std::vector<cv::detail::CameraParams> &cameras,
                   std::vector<cv::cuda::GpuMat> &x_maps, std::vector<cv::cuda::GpuMat> &y_maps,
-                  std::vector<cv::cuda::GpuMat> &x_mesh, std::vector<cv::cuda::GpuMat> &y_mesh,
+                  LockableVector<cv::cuda::GpuMat> &x_mesh, LockableVector<cv::cuda::GpuMat> &y_mesh,
                   double &work_scale, double &seam_scale, double &seam_work_aspect, double &compose_scale,
                   cv::Ptr<cv::detail::Blender> &blender, cv::Ptr<cv::detail::ExposureCompensator> compensator,
                   float &warped_image_scale, float &blend_width, cv::Size &full_img_size, std::shared_ptr<MeshWarper> &mw);

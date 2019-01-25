@@ -8,31 +8,32 @@
 
 
 #include "defs.h"
+#include "lockablevector.h"
 
-extern std::mutex mesh_mutex;
 
 class MeshWarper {
 public:
     MeshWarper(int num_images, int M, int N, float focal_length, double compose_scale, double work_scale);
-    void calibrateMeshWarp(std::vector<cv::Mat> &full_imgs, std::vector<cv::detail::ImageFeatures> &features,
+    void calibrateMeshWarp(LockableVector<cv::Mat> &full_imgs, std::vector<cv::detail::ImageFeatures> &features,
                            std::vector<cv::detail::MatchesInfo> &pairwise_matches,
-                           std::vector<cv::cuda::GpuMat> &x_mesh, std::vector<cv::cuda::GpuMat> &y_mesh,
+                           LockableVector<cv::cuda::GpuMat> &x_mesh, LockableVector<cv::cuda::GpuMat> &y_mesh,
                            std::vector<cv::cuda::GpuMat> &x_maps, std::vector<cv::cuda::GpuMat> &y_maps);
 
-    void createMesh(std::vector<cv::Mat> &full_imgs, std::vector<cv::detail::ImageFeatures> &features,
+    void createMesh(LockableVector<cv::Mat> &full_imgs, std::vector<cv::detail::ImageFeatures> &features,
                     std::vector<cv::detail::MatchesInfo> &pairwise_matches,
                     std::vector<cv::Mat> &x_mesh, std::vector<cv::Mat> &y_mesh,
                     std::vector<cv::cuda::GpuMat> &x_maps, std::vector<cv::cuda::GpuMat> &y_maps,
                     std::vector<cv::Size> &mesh_size);
 
-    void recalibrateMesh(std::vector<cv::Mat> &full_img, std::vector<cv::cuda::GpuMat> &x_maps,
-                         std::vector<cv::cuda::GpuMat> &y_maps, std::vector<cv::cuda::GpuMat> &x_mesh,
-                         std::vector<cv::cuda::GpuMat> &y_mesh);
+    void recalibrateMesh(LockableVector<cv::Mat> &full_img, std::vector<cv::cuda::GpuMat> &x_maps,
+                         std::vector<cv::cuda::GpuMat> &y_maps, LockableVector<cv::cuda::GpuMat> &x_mesh,
+                         LockableVector<cv::cuda::GpuMat> &y_mesh);
 
     std::vector<cv::Mat> interpolateMesh(std::vector<cv::Mat> &meshes_start, std::vector<cv::Mat> &meshes_end, float progress);
 
-    void convertMeshToMap(cv::Mat &mesh_cpu_x, cv::Mat &mesh_cpu_y,
-                          cv::cuda::GpuMat &map_x, cv::cuda::GpuMat &map_y, cv::Size mesh_size);
+    void convertMeshesToMap(std::vector<cv::Mat> &mesh_cpu_x, std::vector<cv::Mat> &mesh_cpu_y,
+                            LockableVector<cv::cuda::GpuMat> &map_x,
+                            LockableVector<cv::cuda::GpuMat> &map_y, std::vector<cv::Size> mesh_sizes);
 
 
 private:

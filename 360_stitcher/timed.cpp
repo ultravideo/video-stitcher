@@ -35,9 +35,9 @@
 
 #include "networking.h" 
 #include "netlib.h"
-#include "blockingqueue.h"
 #include "calibration.h"
 #include "meshwarper.h"
+#include "lockablevector.h"
 
 const int TIMES = 5;
 std::chrono::high_resolution_clock::time_point times[TIMES];
@@ -53,8 +53,8 @@ Ptr<cuda::Filter> filter = cuda::createGaussianFilter(CV_8UC3, CV_8UC3, Size(5, 
 int printing = 0;
 // Online stitching fuction, which resizes if necessary, remaps to 3D and uses the stripped version of feed function
 void stitch_online(double compose_scale, Mat &img, cuda::GpuMat &x_map, cuda::GpuMat &y_map,
-	cuda::GpuMat &x_mesh, cuda::GpuMat &y_mesh, MultiBandBlender* mb,
-	GainCompensator* gc, int thread_num)
+	cuda::GpuMat &x_mesh, cuda::GpuMat &y_mesh, std::mutex &x_mesh_mutex, std::mutex &y_mesh_mutex,
+    MultiBandBlender* mb, GainCompensator* gc, int thread_num)
 {
 	int img_num = thread_num % NUM_IMAGES;
 	if (img_num == printing) {
@@ -94,8 +94,12 @@ void stitch_online(double compose_scale, Mat &img, cuda::GpuMat &x_map, cuda::Gp
 
 	if (enable_local) {
 		// Warp the image and the mask according to a mesh
+        x_mesh_mutex.lock();
+        y_mesh_mutex.lock();
 		cuda::remap(images[img_num], warped_images[img_num], x_mesh, y_mesh,
 			INTER_LINEAR, BORDER_CONSTANT, Scalar(0), stream);
+        x_mesh_mutex.unlock();
+        y_mesh_mutex.unlock();
 	}
 	else
 	{
@@ -115,13 +119,15 @@ void stitch_online(double compose_scale, Mat &img, cuda::GpuMat &x_map, cuda::Gp
 	}
 }
 
-void stitch_one(double compose_scale, vector<Mat> &imgs, vector<cuda::GpuMat> &x_maps,
-               vector<cuda::GpuMat> &y_maps, vector<cuda::GpuMat> &x_mesh, vector<cuda::GpuMat> &y_mesh,
+void stitch_one(double compose_scale, LockableVector<Mat> &imgs, vector<cuda::GpuMat> &x_maps,
+               vector<cuda::GpuMat> &y_maps, LockableVector<cuda::GpuMat> &x_mesh, LockableVector<cuda::GpuMat> &y_mesh,
 	           MultiBandBlender* mb, GainCompensator* gc, BlockingQueue<cuda::GpuMat> &results)
 {
 	for (int i = 0; i < NUM_IMAGES; ++i) {
+        imgs.lock();
 		stitch_online(compose_scale, std::ref(imgs[i]), std::ref(x_maps[i]), std::ref(y_maps[i]),
-                      std::ref(x_mesh[i]), std::ref(y_mesh[i]), mb, gc, i);
+                      std::ref(x_mesh[i]), std::ref(y_mesh[i]), x_mesh.vec_mutex, y_mesh.vec_mutex, mb, gc, i);
+        imgs.unlock();
 	}
 
 	Mat result;
@@ -402,8 +408,8 @@ bool getImages(vector<BlockingQueue<Mat>> &queues, vector<Mat> &images) {
 	return true;
 }
 
-void recalibrateMesh(std::shared_ptr<MeshWarper> &mw, vector<Mat> &input, vector<cuda::GpuMat> &x_maps, vector<cuda::GpuMat> &y_maps,
-                     vector<cuda::GpuMat> &x_mesh, vector<cuda::GpuMat> &y_mesh)
+void recalibrateMesh(std::shared_ptr<MeshWarper> &mw, LockableVector<Mat> &input, vector<cuda::GpuMat> &x_maps, vector<cuda::GpuMat> &y_maps,
+                     LockableVector<cuda::GpuMat> &x_mesh, LockableVector<cuda::GpuMat> &y_mesh)
 {
     vector<Mat> x_mesh_new(NUM_IMAGES);
     vector<Mat> y_mesh_new(NUM_IMAGES);
@@ -418,9 +424,9 @@ void recalibrateMesh(std::shared_ptr<MeshWarper> &mw, vector<Mat> &input, vector
         return;
     while (true) {
         if (frame_amt && (frame_amt % RECALIB_DEL == 0)) {
-            mesh_mutex.lock();
+            input.lock();
             bool input_empty = input.empty();
-            mesh_mutex.unlock();
+            input.unlock();
             if (input_empty) {
                 break;
             }
@@ -445,11 +451,8 @@ void recalibrateMesh(std::shared_ptr<MeshWarper> &mw, vector<Mat> &input, vector
             float progress = (static_cast<float>(frame_amt % RECALIB_DEL)) / static_cast<float>(RECALIB_DEL);
             x_mesh_interp = mw->interpolateMesh(x_mesh_old, x_mesh_new, progress);
             y_mesh_interp = mw->interpolateMesh(y_mesh_old, y_mesh_new, progress);
-            for (int idx = 0; idx < NUM_IMAGES; ++idx) {
-                mw->convertMeshToMap(x_mesh_interp.at(idx), y_mesh_interp.at(idx), x_mesh.at(idx), y_mesh.at(idx), mesh_size.at(idx));
-            }
+            mw->convertMeshesToMap(x_mesh_interp, y_mesh_interp, x_mesh, y_mesh, mesh_size);
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
         frame_amt++;
     }
 }
@@ -502,8 +505,8 @@ int main(int argc, char* argv[])
 	// OFFLINE CALIBRATION
 	vector<cuda::GpuMat> x_maps(NUM_IMAGES);
 	vector<cuda::GpuMat> y_maps(NUM_IMAGES);
-	vector<cuda::GpuMat> x_mesh(NUM_IMAGES);
-	vector<cuda::GpuMat> y_mesh(NUM_IMAGES);
+	LockableVector<cuda::GpuMat> x_mesh(NUM_IMAGES);
+	LockableVector<cuda::GpuMat> y_mesh(NUM_IMAGES);
 	Size full_img_size;
 
 	double work_scale = 1;
@@ -518,7 +521,7 @@ int main(int argc, char* argv[])
 	vector<Point> corners(NUM_IMAGES);
 	vector<Size> sizes(NUM_IMAGES);
 	vector<CameraParams> cameras;
-	vector<Mat> full_img;
+	LockableVector<Mat> full_img;
 
 	bool ret;
 	if (use_stream) {
@@ -556,7 +559,7 @@ int main(int argc, char* argv[])
 	int64 starttime = getTickCount();
 	int frame_amt = 0;
     
-    vector<Mat> input;
+    LockableVector<Mat> input;
  	std::thread consumer(consume, std::ref(results));
     std::thread recalibrater(recalibrateMesh, std::ref(mw), std::ref(input),
                              std::ref(x_maps), std::ref(y_maps),
@@ -567,26 +570,25 @@ int main(int argc, char* argv[])
 	{
 		bool capped;
 		if (use_stream) {
-            mesh_mutex.lock();
+            input.lock();
 			capped = getImages(que, input);
-            mesh_mutex.unlock();
+            input.unlock();
 		}
 		else {
-            mesh_mutex.lock();
+            input.lock();
 			capped = getImages(CAPTURES, input);
-            mesh_mutex.unlock();
+            input.unlock();
 		}
 		if (!capped) {
 			break;
 		}
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
 
-        mesh_mutex.lock();
 		stitch_one(compose_scale, input, x_maps, y_maps, x_mesh, y_mesh, mb, gc, results);
 		++frame_amt;
+        input.lock();
         input.clear();
-        mesh_mutex.unlock();
+        input.unlock();
 	}
 
 	int64 end = getTickCount();
@@ -594,9 +596,7 @@ int main(int argc, char* argv[])
 	std::cout << "Time taken: " << delta / 1000 << " seconds. Avg fps: " << frame_amt / delta * 1000 << std::endl;
 	cuda::GpuMat matti;
 	bool sis = matti.empty();
-    mesh_mutex.lock();
 	results.push(matti);
-    mesh_mutex.unlock();
 
     //TODO: seg faults here
     recalibrater.join();

@@ -150,8 +150,9 @@
     <ClInclude Include="debug.h" />
     <ClInclude Include="defs.h" />
     <ClInclude Include="networking.h" />
-    <ClCompile Include="meshwarper.h" />
-    <ClCompile Include="featurefinder.h" />
+    <ClInclude Include="meshwarper.h" />
+    <ClInclude Include="featurefinder.h" />
+    <ClInclude Include="lockablevector.h" />
   </ItemGroup>
   <ItemGroup>
     <CudaCompile Include="resize.cu">

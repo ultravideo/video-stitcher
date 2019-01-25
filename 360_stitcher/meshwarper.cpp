@@ -12,7 +12,6 @@ using namespace cv::detail;
 using std::vector;
 extern void custom_resize(cv::cuda::GpuMat &in, cv::cuda::GpuMat &out, cv::Size t_size);
 
-std::mutex mesh_mutex;
 
 MeshWarper::MeshWarper(int num_images, int mesh_width, int mesh_height, 
                        float focal_length, double compose_scale, double work_scale):
@@ -35,16 +34,16 @@ MeshWarper::MeshWarper(int num_images, int mesh_width, int mesh_height,
     b.fill(0);
 }
 
-void MeshWarper::createMesh(std::vector<cv::Mat> &full_imgs, std::vector<cv::detail::ImageFeatures> &features,
+void MeshWarper::createMesh(LockableVector<cv::Mat> &full_imgs, std::vector<cv::detail::ImageFeatures> &features,
                            std::vector<cv::detail::MatchesInfo> &pairwise_matches,
                            std::vector<cv::Mat> &mesh_cpu_x, std::vector<cv::Mat> &mesh_cpu_y,
                            std::vector<cv::cuda::GpuMat> &x_maps, std::vector<cv::cuda::GpuMat> &y_maps,
                            std::vector<cv::Size> &mesh_size) {
     A.setZero();
     b.fill(0);
-    mesh_mutex.lock();
+    full_imgs.lock();
     int full_imgs_size = full_imgs.size();
-    mesh_mutex.unlock();
+    full_imgs.unlock();
     vector<Mat> images(full_imgs_size);
     vector<Mat> x_map(full_imgs_size);
     vector<Mat> y_map(full_imgs_size);
@@ -52,11 +51,11 @@ void MeshWarper::createMesh(std::vector<cv::Mat> &full_imgs, std::vector<cv::det
     for (int idx = 0; idx < full_imgs_size; ++idx) {
         mesh_cpu_x[idx] = Mat(N, M, CV_32FC1);
         mesh_cpu_y[idx] = Mat(N, M, CV_32FC1);
-        mesh_mutex.lock();
+        full_imgs.lock();
         resize(full_imgs[idx], images[idx], Size(), compose_scale, compose_scale);
         x_maps[idx].download(x_map[idx]);
         y_maps[idx].download(y_map[idx]);
-        mesh_mutex.unlock();
+        full_imgs.unlock();
         remap(images[idx], images[idx], x_map[idx], y_map[idx], INTER_LINEAR);
         mesh_size[idx] = images[idx].size();
         for (int i = 0; i < N; ++i) {
@@ -131,9 +130,9 @@ void MeshWarper::createMesh(std::vector<cv::Mat> &full_imgs, std::vector<cv::det
 
     int rows_used = 0;
     for (int idx = 0; idx < NUM_IMAGES; ++idx) {
-        mesh_mutex.lock();
+        full_imgs.lock();
         Mat img = images.at(idx);
-        mesh_mutex.unlock();
+        full_imgs.unlock();
         calcGlobalTerm(rows_used, selected_points[idx], mesh_size.at(idx), idx);
         calcSmoothnessTerm(rows_used, img, mesh_size.at(idx), idx);
         calcLocalTerm(rows_used, selected_matches[idx], features, idx);
@@ -168,20 +167,21 @@ std::vector<cv::Mat> MeshWarper::interpolateMesh(vector<Mat> &mesh_start, vector
     return interp_mesh;
 }
 
-void MeshWarper::calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures> &features,
-                       vector<MatchesInfo> &pairwise_matches, vector<cuda::GpuMat> &x_mesh,
-                       vector<cuda::GpuMat> &y_mesh, vector<cuda::GpuMat> &x_maps,
+void MeshWarper::calibrateMeshWarp(LockableVector<Mat> &full_imgs, vector<ImageFeatures> &features,
+                       vector<MatchesInfo> &pairwise_matches, LockableVector<cuda::GpuMat> &x_mesh,
+                       LockableVector<cuda::GpuMat> &y_mesh, vector<cuda::GpuMat> &x_maps,
                        vector<cuda::GpuMat> &y_maps) {
-
+    full_imgs.lock();
     int full_imgs_size = full_imgs.size();
+    full_imgs.unlock();
     vector<Mat> simple_mesh_x(full_imgs_size);
     vector<Mat> simple_mesh_y(full_imgs_size);
     vector<Size> mesh_size(full_imgs_size);
     createMesh(full_imgs, features, pairwise_matches, simple_mesh_x, simple_mesh_y, x_maps, y_maps, mesh_size);
 
-    for (int idx = 0; idx < full_imgs_size; ++idx) {
-        convertMeshToMap(simple_mesh_x[idx], simple_mesh_y[idx], x_mesh[idx], y_mesh[idx], mesh_size[idx]);
-        if (VISUALIZE_WARPED) {
+    convertMeshesToMap(simple_mesh_x, simple_mesh_y, x_mesh, y_mesh, mesh_size);
+    if (VISUALIZE_WARPED) {
+        for (int idx = 0; idx < full_imgs.size(); ++idx) {
             Mat visualized_mesh = drawMesh(simple_mesh_x[idx], simple_mesh_y[idx], mesh_size[idx]);
             imshow(std::to_string(idx), visualized_mesh);
             waitKey();
@@ -189,9 +189,9 @@ void MeshWarper::calibrateMeshWarp(vector<Mat> &full_imgs, vector<ImageFeatures>
     }
 }
 
-void MeshWarper::recalibrateMesh(std::vector<cv::Mat> &full_img, std::vector<cv::cuda::GpuMat> &x_maps,
-                     std::vector<cv::cuda::GpuMat> &y_maps, std::vector<cv::cuda::GpuMat> &x_mesh,
-                     std::vector<cv::cuda::GpuMat> &y_mesh)
+void MeshWarper::recalibrateMesh(LockableVector<cv::Mat> &full_img, std::vector<cv::cuda::GpuMat> &x_maps,
+                     std::vector<cv::cuda::GpuMat> &y_maps, LockableVector<cv::cuda::GpuMat> &x_mesh,
+                     LockableVector<cv::cuda::GpuMat> &y_mesh)
 {
     vector<ImageFeatures> features(NUM_IMAGES);
     vector<MatchesInfo> pairwise_matches(NUM_IMAGES - 1 + (int)wrapAround);
@@ -556,60 +556,67 @@ void MeshWarper::convertVectorToMesh(const Eigen::VectorXd &x, Mat &out_mesh_x, 
 
 // Convert the mesh into a backward map used by opencv remap function
 // @TODO implement this in CUDA so it can be run entirely on GPU
-void MeshWarper::convertMeshToMap(cv::Mat &mesh_cpu_x, cv::Mat &mesh_cpu_y, cuda::GpuMat &map_x, cuda::GpuMat &map_y, cv::Size mesh_size)
+void MeshWarper::convertMeshesToMap(vector<cv::Mat> &mesh_cpu_x, vector<cv::Mat> &mesh_cpu_y,
+                        LockableVector<cv::cuda::GpuMat> &map_x,
+                        LockableVector<cv::cuda::GpuMat> &map_y, vector<cv::Size> mesh_sizes)
 {
-    cuda::GpuMat gpu_small_mesh_x;
-    cuda::GpuMat gpu_small_mesh_y;
-    cuda::GpuMat big_x;
-    cuda::GpuMat big_y;
-    Mat big_mesh_x;
-    Mat big_mesh_y;
-    // Interpolate pixel positions between the mesh vertices with a custom resize function
-    gpu_small_mesh_x.upload(mesh_cpu_x);
-    gpu_small_mesh_y.upload(mesh_cpu_y);
-    custom_resize(gpu_small_mesh_x, big_x, mesh_size);
-    custom_resize(gpu_small_mesh_y, big_y, mesh_size);
-    big_x.download(big_mesh_x);
-    big_y.download(big_mesh_y);
+    for (int idx = 0; idx < mesh_sizes.size(); ++idx) {
+        Size mesh_size = mesh_sizes.at(idx);
+        cuda::GpuMat gpu_small_mesh_x;
+        cuda::GpuMat gpu_small_mesh_y;
+        cuda::GpuMat big_x;
+        cuda::GpuMat big_y;
+        Mat big_mesh_x;
+        Mat big_mesh_y;
+        // Interpolate pixel positions between the mesh vertices with a custom resize function
+        gpu_small_mesh_x.upload(mesh_cpu_x.at(idx));
+        gpu_small_mesh_y.upload(mesh_cpu_y.at(idx));
+        custom_resize(gpu_small_mesh_x, big_x, mesh_size);
+        custom_resize(gpu_small_mesh_y, big_y, mesh_size);
+        big_x.download(big_mesh_x);
+        big_y.download(big_mesh_y);
 
-    // Calculate pixel values for a map half the width and height and then resize the map back to
-    // full size
-    int scale = 2;
-    Mat warp_x(mesh_size.height / scale, mesh_size.width / scale, mesh_cpu_x.type());
-    Mat warp_y(mesh_size.height / scale, mesh_size.width / scale, mesh_cpu_y.type());
-    Mat set_values(mesh_size.height / scale, mesh_size.width / scale, CV_32F);
-    set_values.setTo(Scalar::all(0));
-    warp_x.setTo(Scalar::all(0));
-    warp_y.setTo(Scalar::all(0));
+        // Calculate pixel values for a map half the width and height and then resize the map back to
+        // full size
+        int scale = 2;
+        Mat warp_x(mesh_size.height / scale, mesh_size.width / scale, mesh_cpu_x.at(idx).type());
+        Mat warp_y(mesh_size.height / scale, mesh_size.width / scale, mesh_cpu_y.at(idx).type());
+        Mat set_values(mesh_size.height / scale, mesh_size.width / scale, CV_32F);
+        set_values.setTo(Scalar::all(0));
+        warp_x.setTo(Scalar::all(0));
+        warp_y.setTo(Scalar::all(0));
 
-    Mat sum_x(mesh_size.height / scale, mesh_size.width / scale, mesh_cpu_x.type());
-    Mat sum_y(mesh_size.height / scale, mesh_size.width / scale, mesh_cpu_y.type());
-    sum_x.setTo(Scalar::all(0));
-    sum_y.setTo(Scalar::all(0));
+        Mat sum_x(mesh_size.height / scale, mesh_size.width / scale, mesh_cpu_x.at(idx).type());
+        Mat sum_y(mesh_size.height / scale, mesh_size.width / scale, mesh_cpu_y.at(idx).type());
+        sum_x.setTo(Scalar::all(0));
+        sum_y.setTo(Scalar::all(0));
 
 
-    for (int y = 0; y < mesh_size.height; y++) {
-        for (int x = 0; x < mesh_size.width; x++) {
-            int x_ = (int)big_mesh_x.at<float>(y, x) / scale;
-            int y_ = (int)big_mesh_y.at<float>(y, x) / scale;
-            if (x_ >= 0 && y_ >= 0 && x_ < warp_x.cols && y_ < warp_x.rows) {
-                    sum_x.at<float>(y_, x_) += (float)x;
-                    sum_y.at<float>(y_, x_) += (float)y;
-                    set_values.at<float>(y_, x_)++;
+        for (int y = 0; y < mesh_size.height; y++) {
+            for (int x = 0; x < mesh_size.width; x++) {
+                int x_ = (int)big_mesh_x.at<float>(y, x) / scale;
+                int y_ = (int)big_mesh_y.at<float>(y, x) / scale;
+                if (x_ >= 0 && y_ >= 0 && x_ < warp_x.cols && y_ < warp_x.rows) {
+                        sum_x.at<float>(y_, x_) += (float)x;
+                        sum_y.at<float>(y_, x_) += (float)y;
+                        set_values.at<float>(y_, x_)++;
+                }
             }
         }
-    }
-    for (int y = 0; y < sum_x.rows; ++y) {
-        for (int x = 0; x < sum_x.cols; ++x) {
-                warp_x.at<float>(y, x) = (float)sum_x.at<float>(y, x) / (float)set_values.at<float>(y, x);
-                warp_y.at<float>(y, x) = (float)sum_y.at<float>(y, x) / (float)set_values.at<float>(y, x);
+        for (int y = 0; y < sum_x.rows; ++y) {
+            for (int x = 0; x < sum_x.cols; ++x) {
+                    warp_x.at<float>(y, x) = (float)sum_x.at<float>(y, x) / (float)set_values.at<float>(y, x);
+                    warp_y.at<float>(y, x) = (float)sum_y.at<float>(y, x) / (float)set_values.at<float>(y, x);
+            }
         }
-    }
 
-    gpu_small_mesh_x.upload(warp_x);
-    gpu_small_mesh_y.upload(warp_y);
-    mesh_mutex.lock();
-    custom_resize(gpu_small_mesh_x, map_x, mesh_size);
-    custom_resize(gpu_small_mesh_y, map_y, mesh_size);
-    mesh_mutex.unlock();
+        gpu_small_mesh_x.upload(warp_x);
+        gpu_small_mesh_y.upload(warp_y);
+        map_x.lock();
+        custom_resize(gpu_small_mesh_x, map_x.at(idx), mesh_size);
+        map_x.unlock();
+        map_y.lock();
+        custom_resize(gpu_small_mesh_y, map_y.at(idx), mesh_size);
+        map_y.unlock();
+    }
 }
