@@ -10,12 +10,13 @@ using namespace cv;
 using namespace cv::detail;
 using std::vector;
 
-void featurefinder::findFeatures(vector<Mat> &full_img, vector<ImageFeatures> &features,
+void featurefinder::findFeatures(vector<Mat> &full_img, vector<Mat> &masks, vector<ImageFeatures> &features,
                   const double &work_scale) {
-    Ptr<cuda::ORB> d_orb = cuda::ORB::create(2500, 1.2f, 8);
+    Ptr<cuda::ORB> d_orb = cuda::ORB::create(25000, 1.2f, 8);
     Ptr<SurfFeaturesFinderGpu> surf = makePtr<SurfFeaturesFinderGpu>(HESS_THRESH, NOCTAVES, NOCTAVESLAYERS);
     Mat image;
     cuda::GpuMat gpu_img;
+    cuda::GpuMat gpu_mask;
     cuda::GpuMat descriptors;
     // Read images from file and resize if necessary
     for (int i = 0; i < NUM_IMAGES; i++) {
@@ -31,8 +32,12 @@ void featurefinder::findFeatures(vector<Mat> &full_img, vector<ImageFeatures> &f
         }
 
         if (use_surf) {
-            // Find features with SURF feature finder
-            (*surf)(image, features[i]);
+            if (masks.at(i).empty()) {
+                (*surf)(image, features[i]);
+            } else {
+                // Find features with SURF feature finder
+                (*surf)(image, features[i], masks.at(i));
+            }
         }
         else
         {
@@ -40,7 +45,12 @@ void featurefinder::findFeatures(vector<Mat> &full_img, vector<ImageFeatures> &f
             gpu_img.upload(image);
             cuda::cvtColor(gpu_img, gpu_img, CV_BGR2GRAY);
             features[i].img_size = image.size();
-            d_orb->detectAndCompute(gpu_img, noArray(), features[i].keypoints, descriptors);
+            if (masks.at(i).empty()) {
+                d_orb->detectAndCompute(gpu_img, noArray(), features[i].keypoints, descriptors);
+            } else {
+                gpu_mask.upload(masks.at(i));
+                d_orb->detectAndCompute(gpu_img, gpu_mask, features[i].keypoints, descriptors);
+            }
             descriptors.download(features[i].descriptors);
         }
         features[i].img_idx = i;

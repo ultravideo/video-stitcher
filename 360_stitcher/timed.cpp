@@ -38,6 +38,7 @@
 #include "calibration.h"
 #include "meshwarper.h"
 #include "lockablevector.h"
+#include "debug.h"
 
 const int TIMES = 5;
 std::chrono::high_resolution_clock::time_point times[TIMES];
@@ -134,7 +135,7 @@ void stitch_one(double compose_scale, LockableVector<Mat> &imgs, vector<cuda::Gp
 	Mat result_mask;
 	cuda::GpuMat out;
 	times[0] = std::chrono::high_resolution_clock::now();
-	mb->blend(result, result_mask, out, true);
+	mb->blend(result, result_mask, out, true); //TODO: meshwarping sometimes warps so much that masks look wrong
 	times[1] = std::chrono::high_resolution_clock::now();
 
 	if (clear_buffers) {
@@ -424,12 +425,6 @@ void recalibrateMesh(std::shared_ptr<MeshWarper> &mw, LockableVector<Mat> &input
         return;
     while (true) {
         if (frame_amt && (frame_amt % RECALIB_DEL == 0)) {
-            input.lock();
-            bool input_empty = input.empty();
-            input.unlock();
-            if (input_empty) {
-                break;
-            }
             int64 t = getTickCount();
             if (mw != nullptr) {
                 x_mesh_old = x_mesh_new;
@@ -580,8 +575,22 @@ int main(int argc, char* argv[])
             input.unlock();
 		}
 		if (!capped) {
+            LOGLN("Failed to read all cameras");
+            exit(EXIT_FAILURE);
 			break;
 		}
+
+        if (enable_local) {
+            MultiBandBlender* mb = dynamic_cast<MultiBandBlender*>(blender.get());
+            cuda::Stream stream;
+            for (int i = 0; i < full_img.size(); ++i) {
+                x_mesh.lock();
+                y_mesh.lock();
+                mb->update_mask(i, x_mesh[i], y_mesh[i], stream);
+                x_mesh.unlock();
+                y_mesh.unlock();
+            }
+        }
 
 
 		stitch_one(compose_scale, input, x_maps, y_maps, x_mesh, y_mesh, mb, gc, results);

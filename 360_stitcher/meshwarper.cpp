@@ -1,6 +1,13 @@
 #include "meshwarper.h"
 #include "featurefinder.h"
 #include "debug.h"
+#include "opencv2/stitching/detail/motion_estimators.hpp"
+#include "opencv2/stitching/detail/warpers.hpp"
+#include "opencv2/stitching/warpers.hpp"
+#include "opencv2/stitching/detail/blenders.hpp"
+#include "opencv2/stitching/detail/seam_finders.hpp"
+#include "opencv2/stitching/detail/autocalib.hpp"
+#include "opencv2/cudawarping.hpp"
 
 #include "opencv2/imgproc.hpp"
 
@@ -42,20 +49,22 @@ void MeshWarper::createMesh(LockableVector<cv::Mat> &full_imgs, std::vector<cv::
     A.setZero();
     b.fill(0);
     full_imgs.lock();
-    int full_imgs_size = full_imgs.size();
+    int full_imgs_count = full_imgs.size();
     full_imgs.unlock();
-    vector<Mat> images(full_imgs_size);
-    vector<Mat> x_map(full_imgs_size);
-    vector<Mat> y_map(full_imgs_size);
+    if (full_imgs_count != NUM_IMAGES)
+        return;
+    vector<Mat> images(full_imgs_count);
+    vector<Mat> x_map(full_imgs_count);
+    vector<Mat> y_map(full_imgs_count);
 
-    for (int idx = 0; idx < full_imgs_size; ++idx) {
+    for (int idx = 0; idx < full_imgs_count; ++idx) {
         mesh_cpu_x[idx] = Mat(N, M, CV_32FC1);
         mesh_cpu_y[idx] = Mat(N, M, CV_32FC1);
         full_imgs.lock();
-        resize(full_imgs[idx], images[idx], Size(), compose_scale, compose_scale);
+        resize(full_imgs.at(idx), images.at(idx), Size(), compose_scale, compose_scale);
+        full_imgs.unlock();
         x_maps[idx].download(x_map[idx]);
         y_maps[idx].download(y_map[idx]);
-        full_imgs.unlock();
         remap(images[idx], images[idx], x_map[idx], y_map[idx], INTER_LINEAR);
         mesh_size[idx] = images[idx].size();
         for (int i = 0; i < N; ++i) {
@@ -66,7 +75,49 @@ void MeshWarper::createMesh(LockableVector<cv::Mat> &full_imgs, std::vector<cv::
         }
     }
 
-    featurefinder::findFeatures(images, features, -1);
+    vector<Mat> feature_mask(full_imgs_count);
+    for (int idx = 0; idx < NUM_IMAGES; ++idx) {
+        if (use_surf) { //TODO: masks don't seem to work on surf
+            continue;
+        }
+        feature_mask.at(idx) = Mat(images.at(idx).rows, images.at(idx).cols, CV_8U);
+        feature_mask.at(idx).setTo(Scalar::all(0));
+        //TODO: calculate overlap
+        //Overlap will change based on distance distance of the subject from the cameras
+        //closer = less overlap, further = more overlap
+        int overlap = 400;
+
+
+
+
+        int img_cols = images.at(idx).cols;
+        int img_rows = images.at(idx).rows;
+        // Hardcoded values and camera sources. Opencv splits the third video(idx==3) in the middle
+        if (idx == 3) {
+            float split_offset_l = images.at(0).cols * 0.25f * 2.0f;
+            float split_offset_r = -images.at(0).cols * 0.25f * 2.0f;
+
+            Rect r = {(int)split_offset_l - overlap, 0, overlap, img_rows};
+            rectangle(feature_mask.at(idx), r, Scalar::all(255), CV_FILLED);
+
+            r = {img_cols + (int)split_offset_r, 0, overlap, img_rows};
+            rectangle(feature_mask.at(idx), r, Scalar::all(255), CV_FILLED);
+        } else {
+            Rect r = {0, 0, overlap, img_rows};
+            rectangle(feature_mask.at(idx), r, Scalar::all(255), CV_FILLED);
+            r = {img_cols - overlap, 0, overlap, img_rows};
+            rectangle(feature_mask.at(idx), r, Scalar::all(255), CV_FILLED);
+        }
+        // add image mask to prevent finding features of the image's borders
+        Mat image_mask = Mat(images.at(idx).rows, images.at(idx).cols, CV_8U);
+        cvtColor(images[idx], image_mask, CV_8U);
+        inRange(images[idx], Scalar::all(0), Scalar::all(0), image_mask);
+        bitwise_not(image_mask, image_mask);
+        bitwise_and(image_mask, feature_mask.at(idx), feature_mask.at(idx));
+    }
+
+
+    featurefinder::findFeatures(images, feature_mask, features, -1);
     featurefinder::matchFeatures(features, pairwise_matches);
 
     int features_per_image = MAX_FEATURES_PER_IMAGE;
@@ -90,28 +141,67 @@ void MeshWarper::createMesh(LockableVector<cv::Mat> &full_imgs, std::vector<cv::
         if (VISUALIZE_MATCHES) {
             Mat visual_matches;
             drawMatches(images[src], features[src].keypoints, images[dst], features[dst].keypoints, pw_matches.matches, visual_matches);
+            //lock full_imgs to stop drawing frames using the old calibration
+            full_imgs.lock();
             showMat("visualized matches", visual_matches);
+            full_imgs.unlock();
         }
 
         //Find all indexes of the inliers_mask that contain the value 1
         for (int i = 0; i < pw_matches.inliers_mask.size(); ++i) {
             if (pw_matches.inliers_mask[i]) {
+
+                //Filter out matches that don't seem sane for the current rig
                 matchWithDst_t match = { pw_matches.matches[i], pw_matches.dst_img_idx };
+                int queryIdx = match.match.queryIdx;
+                int trainIdx = match.match.trainIdx;
+                int src = pw_matches.src_img_idx;
+                int dst = pw_matches.dst_img_idx;
+
+                Point2f p1 = features[src].keypoints[queryIdx].pt;
+                Point2f p2 = features[dst].keypoints[trainIdx].pt;
+
+                // Distance between dst and src in radians
+                float theta = dst - src;
+                if (src == 0 && dst == NUM_IMAGES - 1 && wrapAround) {
+                    theta = -1;
+                }
+                // Hardcoded values and camera sources. Opencv splits the third video in the middle
+                if (src == 3) {
+                    theta = 4.25f;
+                }
+                if (src == 4) {
+                    theta = -0.25f;
+                }
+                float scale = compose_scale / work_scale;
+                float max_x_dist = theta * focal_length * scale;
+
+                // TODO: add check for x-coordinates. x-coordinates depend on the subjects distance to the camera
+                if (abs(p1.y - p2.y) > 40) {
+                    LOGLN("Invalid featurepoint match y-diff: " << p1.y - p2.y);
+                    continue;
+                } else if (abs(max_x_dist - (p1.x - p2.x)) > 300) {
+                    LOGLN("Invalid featurepoint match x-diff: " << abs(max_x_dist - (p1.x - p2.x)));
+                    continue;
+                }
+
+
                 all_matches[src].push_back(match);
             }
         }
     }
 
 
+
     vector<matchWithDst_t> selected_matches[NUM_IMAGES];
 
     // Select features_per_image amount of random features points from all_matches
     for (int img = 0; img < NUM_IMAGES; ++img) {
-        std::sort(all_matches[img].begin(), all_matches[img].end(), 
-        [](matchWithDst_t a, matchWithDst_t b){
-            return a.match.distance < b.match.distance;
-        });
-        for (int i = 0; i < min(features_per_image, (int)(all_matches[img].size() * 0.8f)); ++i) {
+        /* std::sort(all_matches[img].begin(), all_matches[img].end(), */ 
+        /* [](matchWithDst_t a, matchWithDst_t b){ */
+        /*     return a.match.distance < b.match.distance; */
+        /* }); */
+        for (int i = 0; i < min(features_per_image, (int)(all_matches[img].size())); ++i) {
             matchWithDst_t match = all_matches[img].at(i);
             selected_matches[img].push_back(match);
         }
@@ -130,9 +220,7 @@ void MeshWarper::createMesh(LockableVector<cv::Mat> &full_imgs, std::vector<cv::
 
     int rows_used = 0;
     for (int idx = 0; idx < NUM_IMAGES; ++idx) {
-        full_imgs.lock();
         Mat img = images.at(idx);
-        full_imgs.unlock();
         calcGlobalTerm(rows_used, selected_points[idx], mesh_size.at(idx), idx);
         calcSmoothnessTerm(rows_used, img, mesh_size.at(idx), idx);
         calcLocalTerm(rows_used, selected_matches[idx], features, idx);
@@ -145,6 +233,15 @@ void MeshWarper::createMesh(LockableVector<cv::Mat> &full_imgs, std::vector<cv::
     x = solver.solve(b);
     for (int idx = 0; idx < NUM_IMAGES; ++idx) {
         convertVectorToMesh(x, mesh_cpu_x.at(idx), mesh_cpu_y.at(idx), idx);
+    }
+    if (VISUALIZE_WARPED) {
+        for (int idx = 0; idx < full_imgs.size(); ++idx) {
+            Mat visualized_mesh = drawMesh(mesh_cpu_x[idx], mesh_cpu_y[idx], mesh_size[idx]);
+            imshow(std::to_string(idx), visualized_mesh);
+            full_imgs.lock();
+            waitKey();
+            full_imgs.unlock();
+        }
     }
 }
 
@@ -172,11 +269,11 @@ void MeshWarper::calibrateMeshWarp(LockableVector<Mat> &full_imgs, vector<ImageF
                        LockableVector<cuda::GpuMat> &y_mesh, vector<cuda::GpuMat> &x_maps,
                        vector<cuda::GpuMat> &y_maps) {
     full_imgs.lock();
-    int full_imgs_size = full_imgs.size();
+    int full_imgs_count = full_imgs.size();
     full_imgs.unlock();
-    vector<Mat> simple_mesh_x(full_imgs_size);
-    vector<Mat> simple_mesh_y(full_imgs_size);
-    vector<Size> mesh_size(full_imgs_size);
+    vector<Mat> simple_mesh_x(full_imgs_count);
+    vector<Mat> simple_mesh_y(full_imgs_count);
+    vector<Size> mesh_size(full_imgs_count);
     createMesh(full_imgs, features, pairwise_matches, simple_mesh_x, simple_mesh_y, x_maps, y_maps, mesh_size);
 
     convertMeshesToMap(simple_mesh_x, simple_mesh_y, x_mesh, y_mesh, mesh_size);
@@ -554,6 +651,7 @@ void MeshWarper::convertVectorToMesh(const Eigen::VectorXd &x, Mat &out_mesh_x, 
     }
 }
 
+// TODO: convert here normal mesh size to opencv mesh size
 // Convert the mesh into a backward map used by opencv remap function
 // @TODO implement this in CUDA so it can be run entirely on GPU
 void MeshWarper::convertMeshesToMap(vector<cv::Mat> &mesh_cpu_x, vector<cv::Mat> &mesh_cpu_y,
