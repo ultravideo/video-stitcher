@@ -34,8 +34,10 @@ MeshWarper::MeshWarper(int num_images, int mesh_width, int mesh_height,
     int smoothness_size = dims * num_images * (N - 1) * (M - 1) * 8;
     int local_size = dims * (num_images + (int)wrapAround + 1) * features_per_image;
 
+    int local_temporal_size = dims * (num_images + (int)wrapAround + 1) * MAX_TEMPORAL_FEATURES_PER_IMAGE;
+
     // Number of rows/equations needed for calculating the mesh
-    int num_rows = global_size + smoothness_size + local_size;
+    int num_rows = global_size + smoothness_size + local_size + local_temporal_size;
     A.resize(num_rows, dims * N * M * num_images);
     b.resize(num_rows);
     b.fill(0);
@@ -87,9 +89,6 @@ void MeshWarper::createMesh(LockableVector<cv::Mat> &full_imgs, std::vector<cv::
         //closer = less overlap, further = more overlap
         int overlap = 400;
 
-
-
-
         int img_cols = images.at(idx).cols;
         int img_rows = images.at(idx).rows;
         // Hardcoded values and camera sources. Opencv splits the third video(idx==3) in the middle
@@ -120,74 +119,54 @@ void MeshWarper::createMesh(LockableVector<cv::Mat> &full_imgs, std::vector<cv::
     featurefinder::findFeatures(images, feature_mask, features, -1);
     featurefinder::matchFeatures(features, pairwise_matches);
 
-    int features_per_image = MAX_FEATURES_PER_IMAGE;
-
-
-    vector<matchWithDst_t> all_matches[NUM_IMAGES];
-    // Select all matches that fit criteria
-    for (int idx = 0; idx < pairwise_matches.size(); ++idx) {
-        MatchesInfo &pw_matches = pairwise_matches[idx];
-        int src = pw_matches.src_img_idx;
-        int dst = pw_matches.dst_img_idx;
-        if (!pw_matches.matches.size() || !pw_matches.num_inliers) continue;
-
-        if (dst != NUM_IMAGES - 1 || src != 0 && dst == 5) {
-            // Only calculate loss from pairs of src and dst where src = dst - 1
-            // to avoid using same pairs multiple times
-            if (abs(src - dst - 1) > 0.1) {
-                continue;
+    vector<MatchesInfo> temporal_matches(NUM_IMAGES);
+    if (!prev_features.empty()) {
+        featurefinder::matchFeaturesTemporal(features, prev_features, temporal_matches);
+        for (int idx = 0; idx < temporal_matches.size(); ++idx) {
+            MatchesInfo &pw_matches = temporal_matches[idx];
+            if (VISUALIZE_TEMPORAL_MATCHES) {
+                Mat visual_matches;
+                drawMatches(images[idx], features[idx].keypoints, images[idx], prev_features[idx].keypoints, pw_matches.matches, visual_matches);
+                //lock full_imgs to stop drawing frames using the old calibration
+                full_imgs.lock();
+                showMat("visualized matches", visual_matches);
+                full_imgs.unlock();
             }
         }
-        if (VISUALIZE_MATCHES) {
+    }
+
+    vector<matchWithDst_t> all_temp_matches[NUM_IMAGES];
+    filterTemporalMatches(temporal_matches, features, all_temp_matches);
+
+
+    vector<matchWithDst_t> selected_temp_matches[NUM_IMAGES];
+    int temporal_feat_per_image = MAX_TEMPORAL_FEATURES_PER_IMAGE;
+
+    // Select features_per_image amount of random features points from all_matches
+    for (int img = 0; img < NUM_IMAGES; ++img) {
+        for (int i = 0; i < min(temporal_feat_per_image, (int)(all_temp_matches[img].size())); ++i) {
+            matchWithDst_t match = all_temp_matches[img].at(i);
+            selected_temp_matches[img].push_back(match);
+        }
+    }
+
+
+    int features_per_image = MAX_FEATURES_PER_IMAGE;
+
+    vector<matchWithDst_t> all_matches[NUM_IMAGES];
+    filterMatches(pairwise_matches, features, all_matches);
+
+    if (VISUALIZE_MATCHES) {
+        for (int idx = 0; idx < pairwise_matches.size(); ++idx) {
+            MatchesInfo &pw_matches = pairwise_matches[idx];
+            int src = pw_matches.src_img_idx;
+            int dst = pw_matches.dst_img_idx;
             Mat visual_matches;
             drawMatches(images[src], features[src].keypoints, images[dst], features[dst].keypoints, pw_matches.matches, visual_matches);
             //lock full_imgs to stop drawing frames using the old calibration
             full_imgs.lock();
             showMat("visualized matches", visual_matches);
             full_imgs.unlock();
-        }
-
-        //Find all indexes of the inliers_mask that contain the value 1
-        for (int i = 0; i < pw_matches.inliers_mask.size(); ++i) {
-            if (pw_matches.inliers_mask[i]) {
-
-                //Filter out matches that don't seem sane for the current rig
-                matchWithDst_t match = { pw_matches.matches[i], pw_matches.dst_img_idx };
-                int queryIdx = match.match.queryIdx;
-                int trainIdx = match.match.trainIdx;
-                int src = pw_matches.src_img_idx;
-                int dst = pw_matches.dst_img_idx;
-
-                Point2f p1 = features[src].keypoints[queryIdx].pt;
-                Point2f p2 = features[dst].keypoints[trainIdx].pt;
-
-                // Distance between dst and src in radians
-                float theta = dst - src;
-                if (src == 0 && dst == NUM_IMAGES - 1 && wrapAround) {
-                    theta = -1;
-                }
-                // Hardcoded values and camera sources. Opencv splits the third video in the middle
-                if (src == 3) {
-                    theta = 4.25f;
-                }
-                if (src == 4) {
-                    theta = -0.25f;
-                }
-                float scale = compose_scale / work_scale;
-                float max_x_dist = theta * focal_length * scale;
-
-                // TODO: add check for x-coordinates. x-coordinates depend on the subjects distance to the camera
-                if (abs(p1.y - p2.y) > 40) {
-                    LOGLN("Invalid featurepoint match y-diff: " << p1.y - p2.y);
-                    continue;
-                } else if (abs(max_x_dist - (p1.x - p2.x)) > 300) {
-                    LOGLN("Invalid featurepoint match x-diff: " << abs(max_x_dist - (p1.x - p2.x)));
-                    continue;
-                }
-
-
-                all_matches[src].push_back(match);
-            }
         }
     }
 
@@ -220,10 +199,11 @@ void MeshWarper::createMesh(LockableVector<cv::Mat> &full_imgs, std::vector<cv::
 
     int rows_used = 0;
     for (int idx = 0; idx < NUM_IMAGES; ++idx) {
-        Mat img = images.at(idx);
         calcGlobalTerm(rows_used, selected_points[idx], mesh_size.at(idx), idx);
-        calcSmoothnessTerm(rows_used, img, mesh_size.at(idx), idx);
+        calcSmoothnessTerm(rows_used, images.at(idx), mesh_size.at(idx), idx);
         calcLocalTerm(rows_used, selected_matches[idx], features, idx);
+
+        calcTemporalLocalTerm(rows_used, selected_temp_matches[idx], features, idx);
     }
 
     // LeastSquaresConjudateGradientSolver solves equations that are in format |Ax + b|^2
@@ -242,6 +222,12 @@ void MeshWarper::createMesh(LockableVector<cv::Mat> &full_imgs, std::vector<cv::
             waitKey();
             full_imgs.unlock();
         }
+    }
+
+    //update previous selected features for temporal terms
+    prev_features = features;
+    for (int idx = 0; idx < NUM_IMAGES; ++idx) {
+        prev_matches[idx] = selected_matches[idx];
     }
 }
 
@@ -349,7 +335,7 @@ void MeshWarper::calcSmoothnessTerm(int &row, const cv::Mat &image,
             // | 4  /|\  7 |
             // |  / 5| 6\  |
             // |/____|____\|
-            for (int t = 0; t < 8; ++t) {
+            for (int t = 0; t < 8; t += 1) {
 
                 //Indexes of the triangle vertex positions, (0,0) being (j,i) in (x, y) format
                 Point2i Vi[3];
@@ -619,6 +605,83 @@ void MeshWarper::calcLocalTerm(int &row, const vector<matchWithDst_t> &matches,
     }
 }
 
+void MeshWarper::calcTemporalLocalTerm(int &row, const vector<matchWithDst_t> &matches,
+                                       const vector<ImageFeatures> &features, int idx)
+{
+    float f = focal_length;
+    float a = sqrt(ALPHAS[3]);
+    for (int m = 0; m < matches.size(); ++m) {
+        const matchWithDst_t matchWDst = matches.at(m);
+        DMatch match = matches.at(m).match;
+
+        int queryIdx = match.queryIdx;
+        int trainIdx = match.trainIdx;
+        int src = idx;
+        int dst = idx;
+
+        float h1 = features[src].img_size.height;
+        float w1 = features[src].img_size.width;
+        float h2 = prev_features[dst].img_size.height;
+        float w2 = prev_features[dst].img_size.width;
+
+        Point2f p1 = features[src].keypoints[queryIdx].pt;
+        Point2f p2 = prev_features[dst].keypoints[trainIdx].pt;
+
+        float scale = compose_scale / work_scale;
+        float x1_ = p1.x;
+        float y1_ = p1.y;
+        float x2_ = p2.x;
+        float y2_ = p2.y;
+
+        // Ignore features which have been warped outside of either image
+        if (x1_ < 0 || x2_ < 0 || y1_ < 0 || y2_ < 0 || x1_ >= w1 || x2_ >= w2
+                || y1_ >= h1 || y2_ >= h2 ) {
+            continue;
+        }
+
+        // Calculate in which rectangle the features are
+        int t1 = floor(y1_ * (N-1) / h1);
+        int t2 = floor(y2_ * (N-1) / h2);
+        int l1 = floor(x1_ * (M-1) / w1);
+        int l2 = floor(x2_ * (M-1) / w2);
+
+        // Calculate coordinates for the corners of the recatngles the features are in
+        float top1 = t1 * h1 / (N-1);
+        float bot1 = top1 + h1 / (N-1); // (t1+1) * h1 / N
+        float left1 = l1 * w1 / (M-1);
+        float right1 = left1 + w1 / (M-1); // (l1+1) * w1 / M
+        float top2 = t2 * h2 / (N-1);
+        float bot2 = top2 + h2 / (N-1); // (t2+1) * h2 / N
+        float left2 = l2 * w2 / (M-1);
+        float right2 = left2 + w2 / (M-1); // (l2+1) * w2 / M
+
+        // Calculate local coordinates for the features within the rectangles
+        float u1 = (x1_ - left1) / (right1 - left1);
+        float u2 = (x2_ - left2) / (right2 - left2);
+        float v1 = (y1_ - top1) / (bot1 - top1);
+        float v2 = (y2_ - top2) / (bot2 - top2);
+
+
+        // fp1 bilinear mapping
+        // from: https://www2.eecs.berkeley.edu/Pubs/TechRpts/1989/CSD-89-516.pdf
+        A.insert(row,  2*(l1   + M * (t1)   + M*N*src)) = (1-u1)*(1-v1) * a;
+        A.insert(row,  2*(l1+1 + M * (t1)   + M*N*src)) = u1*(1-v1) * a;
+        A.insert(row,  2*(l1 +   M * (t1+1) + M*N*src)) = v1*(1-u1) * a;
+        A.insert(row,  2*(l1+1 + M * (t1+1) + M*N*src)) = u1*v1 * a;
+        b(row) = p2.x * a;
+
+
+        // fp1 bilinear mapping
+        A.insert(row+1, 2*(l1   + M * (t1)   + M*N*src)+1) = (1-u1)*(1-v1) * a;
+        A.insert(row+1, 2*(l1+1 + M * (t1)   + M*N*src)+1) = u1*(1-v1) * a;
+        A.insert(row+1, 2*(l1 +   M * (t1+1) + M*N*src)+1) = v1*(1-u1) * a;
+        A.insert(row+1, 2*(l1+1 + M * (t1+1) + M*N*src)+1) = u1*v1 * a;
+        b(row + 1) = p2.y * a;
+
+        row+=2;
+    }
+}
+
 Mat MeshWarper::drawMesh(const Mat &mesh_cpu_x, const Mat &mesh_cpu_y, Size mesh_size)
 {
     Mat mat(mesh_size.height, mesh_size.width, CV_16UC3);
@@ -716,5 +779,101 @@ void MeshWarper::convertMeshesToMap(vector<cv::Mat> &mesh_cpu_x, vector<cv::Mat>
         map_y.lock();
         custom_resize(gpu_small_mesh_y, map_y.at(idx), mesh_size);
         map_y.unlock();
+    }
+}
+
+void MeshWarper::filterMatches(vector<MatchesInfo> &pairwise_matches, vector<ImageFeatures> &features, vector<matchWithDst_t> *filt_matches)
+{
+    // Select all matches that fit criteria
+    for (int idx = 0; idx < pairwise_matches.size(); ++idx) {
+        MatchesInfo &pw_matches = pairwise_matches[idx];
+        int src = pw_matches.src_img_idx;
+        int dst = pw_matches.dst_img_idx;
+        if (!pw_matches.matches.size() || !pw_matches.num_inliers) continue;
+
+        if (dst != NUM_IMAGES - 1 || src != 0 && dst == 5) {
+            // Only calculate loss from pairs of src and dst where src = dst - 1
+            // to avoid using same pairs multiple times
+            if (abs(src - dst - 1) > 0.1) {
+                continue;
+            }
+        }
+
+        //Find all indexes of the inliers_mask that contain the value 1
+        for (int i = 0; i < pw_matches.inliers_mask.size(); ++i) {
+            if (pw_matches.inliers_mask[i]) {
+
+                //Filter out matches that don't seem sane for the current rig
+                matchWithDst_t match = { pw_matches.matches[i], pw_matches.dst_img_idx };
+                int queryIdx = match.match.queryIdx;
+                int trainIdx = match.match.trainIdx;
+                int src = pw_matches.src_img_idx;
+                int dst = pw_matches.dst_img_idx;
+
+                Point2f p1 = features[src].keypoints[queryIdx].pt;
+                Point2f p2 = features[dst].keypoints[trainIdx].pt;
+
+                // Distance between dst and src in radians
+                float theta = dst - src;
+                if (src == 0 && dst == NUM_IMAGES - 1 && wrapAround) {
+                    theta = -1;
+                }
+                // Hardcoded values and camera sources. Opencv splits the third video in the middle
+                if (src == 3) {
+                    theta = 4.25f;
+                }
+                if (src == 4) {
+                    theta = -0.25f;
+                }
+
+                float scale = compose_scale / work_scale;
+                float max_x_dist = theta * focal_length * scale;
+
+                if (abs(p1.y - p2.y) > 40) {
+                    //LOGLN("Invalid featurepoint match y-diff: " << p1.y - p2.y);
+                    continue;
+                } else if (abs(max_x_dist - (p1.x - p2.x)) > 300) {
+                    //LOGLN("Invalid featurepoint match x-diff: " << abs(max_x_dist - (p1.x - p2.x)));
+                    continue;
+                }
+                filt_matches[src].push_back(match);
+            }
+        }
+    }
+}
+
+void MeshWarper::filterTemporalMatches(vector<MatchesInfo> &pairwise_matches, vector<ImageFeatures> &features, vector<matchWithDst_t> *filt_matches)
+{
+    // Select all matches that fit criteria
+    for (int idx = 0; idx < pairwise_matches.size(); ++idx) {
+        MatchesInfo &pw_matches = pairwise_matches[idx];
+        int src = pw_matches.src_img_idx;
+        int dst = pw_matches.dst_img_idx;
+        if (!pw_matches.matches.size() || !pw_matches.num_inliers) continue;
+
+        //Find all indexes of the inliers_mask that contain the value 1
+        for (int i = 0; i < pw_matches.inliers_mask.size(); ++i) {
+            if (pw_matches.inliers_mask[i]) {
+
+                //Filter out matches that don't seem sane for the current rig
+                matchWithDst_t match = { pw_matches.matches[i], pw_matches.dst_img_idx };
+                int queryIdx = match.match.queryIdx;
+                int trainIdx = match.match.trainIdx;
+                int src = pw_matches.src_img_idx;
+                int dst = pw_matches.dst_img_idx;
+
+                Point2f p1 = features[src].keypoints[queryIdx].pt;
+                Point2f p2 = prev_features[dst].keypoints[trainIdx].pt;
+
+                if (abs(p1.y - p2.y) > 30) {
+                    //LOGLN("Invalid TEMPORAL featurepoint match y-diff: " << p1.y - p2.y);
+                    continue;
+                } else if (abs(p1.x - p2.x) > 30) {
+                    //LOGLN("Invalid TEMPORAL featurepoint match x-diff: " << p1.x - p2.x);
+                    continue;
+                }
+                filt_matches[src].push_back(match);
+            }
+        }
     }
 }

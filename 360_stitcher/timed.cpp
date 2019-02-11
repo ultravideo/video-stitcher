@@ -584,11 +584,15 @@ int main(int argc, char* argv[])
             MultiBandBlender* mb = dynamic_cast<MultiBandBlender*>(blender.get());
             cuda::Stream stream;
             for (int i = 0; i < full_img.size(); ++i) {
+
+                //Disabled, causes black seams
+                /*
                 x_mesh.lock();
                 y_mesh.lock();
                 mb->update_mask(i, x_mesh[i], y_mesh[i], stream);
                 x_mesh.unlock();
                 y_mesh.unlock();
+                */
             }
         }
 

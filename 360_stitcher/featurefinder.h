@@ -9,5 +9,7 @@ namespace featurefinder {
                       const double &work_scale);
 
     void matchFeatures(std::vector<cv::detail::ImageFeatures> &features, std::vector<cv::detail::MatchesInfo> &pairwise_matches);
+    void matchFeaturesTemporal(std::vector<cv::detail::ImageFeatures> &features, 
+            std::vector<cv::detail::ImageFeatures> &prev_features, std::vector<cv::detail::MatchesInfo> &pairwise_matches);
 
 }

@@ -30,7 +30,7 @@ const bool show_out = true;
 const bool use_stream = false;
 const bool clear_buffers = false;
 const bool debug_stream = false;
-const bool use_surf = true;
+const bool use_surf = false;
 const bool send_results = false;
 const bool send_height_info = true;
 const bool keep_aspect_ratio = true;
@@ -56,14 +56,16 @@ const int HESS_THRESH = 300;
 const int NOCTAVES = 4;
 const int NOCTAVESLAYERS = 2;
 
-const int MAX_FEATURES_PER_IMAGE = 500;
+const int MAX_FEATURES_PER_IMAGE = 100;
+const int MAX_TEMPORAL_FEATURES_PER_IMAGE = MAX_FEATURES_PER_IMAGE;
 const bool VISUALIZE_MATCHES = false; // Draw the meshes and matches to images pre mesh warp
 const bool VISUALIZE_WARPED = false; // Draw the warped mesh
+const bool VISUALIZE_TEMPORAL_MATCHES = false;
 const int MESH_HEIGHT = 10;
 const int MESH_WIDTH = 10;
 // Alphas are weights for different cost functions
-// 0: Local alignment, 1: Global alignment, 2: Smoothness
-const float ALPHAS[3] = {1.0f, 0.01f, 0.00005f};
+// 0: Local alignment, 1: Global alignment, 2: Smoothness, 3: Temporal local alignment (WIP)
+const float ALPHAS[4] = {1.0f, 0.01f, 0.00005f, 0.005f};
 const int GLOBAL_DIST = 150; // Maximum distance from vertex in global warping
 
 // Test material before right videos are obtained from the camera rig

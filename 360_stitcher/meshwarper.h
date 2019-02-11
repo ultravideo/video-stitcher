@@ -49,9 +49,15 @@ private:
     void calcSmoothnessTerm(int &row, const cv::Mat &image, cv::Size mesh_size, int idx);
     void calcLocalTerm(int &row, const std::vector<matchWithDst_t> &matches,
                        const std::vector<cv::detail::ImageFeatures> &features, int idx);
+    void calcTemporalLocalTerm(int &row, const std::vector<matchWithDst_t> &matches,
+                               const std::vector<cv::detail::ImageFeatures> &features, int idx);
 
     cv::Mat drawMesh(const cv::Mat &mesh_cpu_x, const cv::Mat &mesh_cpu_y, cv::Size mesh_size);
     void convertVectorToMesh(const Eigen::VectorXd &x, cv::Mat &out_mesh_x, cv::Mat &out_mesh_y, int idx);
+    void filterMatches(std::vector<cv::detail::MatchesInfo> &pairwise_matches,
+                       std::vector<cv::detail::ImageFeatures> &features, std::vector<matchWithDst_t> *filt_matches);
+    void filterTemporalMatches(std::vector<cv::detail::MatchesInfo> &pairwise_matches,
+                               std::vector<cv::detail::ImageFeatures> &features, std::vector<matchWithDst_t> *filt_matches);
 
 
     Eigen::SparseMatrix<double> A; // coefficients
@@ -61,4 +67,6 @@ private:
     float focal_length;
     double compose_scale;
     double work_scale;
+    std::vector<cv::detail::ImageFeatures> prev_features;
+    std::vector<matchWithDst_t> prev_matches[NUM_IMAGES];
 };

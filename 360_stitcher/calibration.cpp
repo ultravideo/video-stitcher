@@ -205,7 +205,7 @@ void warpImages(vector<Mat> full_img, Size full_img_size, vector<CameraParams> c
     Mat mask_warped;
     // Dilation filter for local warping, without dilation local warping will cause black borders between seams
     // Better solution might be needed in the future
-    Ptr<cuda::Filter> dilation_filter = cuda::createMorphologyFilter(MORPH_DILATE, CV_8U, Mat(), {-1,-1}, 3);
+    Ptr<cuda::Filter> dilation_filter = cuda::createMorphologyFilter(MORPH_DILATE, CV_8U, Mat(), {-1,-1}, 1);
     for (int img_idx = 0; img_idx < NUM_IMAGES; img_idx++)
     {
         gpu_mask_warped.release();
@@ -302,7 +302,8 @@ bool stitch_calib(LockableVector<Mat> &full_img, vector<CameraParams> &cameras, 
         MultiBandBlender* mb = dynamic_cast<MultiBandBlender*>(blender.get());
         cuda::Stream stream;
         for (int i = 0; i < full_img.size(); ++i) {
-            mb->update_mask(i, x_mesh[i], y_mesh[i], stream);
+            //Disabled, causes black seams
+            //mb->update_mask(i, x_mesh[i], y_mesh[i], stream);
         }
     }
     return true;
