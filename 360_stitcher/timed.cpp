@@ -421,7 +421,7 @@ void recalibrateMesh(std::shared_ptr<MeshWarper> &mw, LockableVector<Mat> &input
     vector<Size> mesh_size(NUM_IMAGES);
     int frame_amt = 0;
     bool first_cal = true;
-    if (!recalibrate)
+    if (!recalibrate || !enable_local)
         return;
     while (true) {
         if (frame_amt && (frame_amt % RECALIB_DEL == 0)) {
