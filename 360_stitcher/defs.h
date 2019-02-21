@@ -47,6 +47,7 @@ const int offsets[NUM_IMAGES] = { -92+134, 30+134, 28+134, 0+134, -40+134, -134+
 //const int offsets[NUM_IMAGES] = { 271, 239, 205, 176, 339, 299 }; // test videos3
 //const int offsets[NUM_IMAGES] = { 0 }; // dynamic
 const int RECALIB_DEL = 15;
+const int RECALIB_THRESH = 15; //How many pixels of change until recalibrating a seam
 const double WORK_MEGAPIX = 0.6;	//0.6;	//-1			// Megapix parameter is scaled to the number
 const double SEAM_MEAGPIX = 0.01;							// of pixels in full image and this is used
 const double COMPOSE_MEGAPIX = 1.4;	//1.4;	//2.2;	//-1	// as a scaling factor when resizing images
@@ -65,8 +66,9 @@ const int MESH_HEIGHT = 10;
 const int MESH_WIDTH = 10;
 // Alphas are weights for different cost functions
 // 0: Local alignment, 1: Global alignment, 2: Smoothness, 3: Temporal local alignment (WIP)
-const float ALPHAS[4] = {1.0f, 0.01f, 0.00005f, 0.005f};
-const int GLOBAL_DIST = 150; // Maximum distance from vertex in global warping
+const float ALPHAS[4] = {1.0f, 0.01f, 0.00005f, 0.000f};
+const bool USE_TEMPORAL = ALPHAS[3] != 0.0f;
+const int GLOBAL_DIST = 30; // Maximum distance from vertex in global warping
 
 // Test material before right videos are obtained from the camera rig
 const std::vector<std::string> video_files = {folder + "/0.mp4", folder + "/1.mp4", folder + "/2.mp4", folder + "/3.mp4", folder + "/4.mp4", folder + "/5.mp4"};

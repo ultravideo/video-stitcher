@@ -67,6 +67,16 @@ private:
     float focal_length;
     double compose_scale;
     double work_scale;
+
+    //Used for local term if new ones aren't significantly different
+    //may hold older than one calibration old features
+    std::vector<std::vector<cv::detail::ImageFeatures>> old_features;
+    std::vector<matchWithDst_t> old_matches[NUM_IMAGES];
+
+    //Used for temporal terms unlike old_features always holds previous matches
     std::vector<cv::detail::ImageFeatures> prev_features;
     std::vector<matchWithDst_t> prev_matches[NUM_IMAGES];
+
+    // Previous average of matched feature point's distance
+    float prev_avg[NUM_IMAGES * 2];
 };

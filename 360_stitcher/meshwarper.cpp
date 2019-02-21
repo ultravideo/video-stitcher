@@ -23,7 +23,7 @@ extern void custom_resize(cv::cuda::GpuMat &in, cv::cuda::GpuMat &out, cv::Size 
 MeshWarper::MeshWarper(int num_images, int mesh_width, int mesh_height, 
                        float focal_length, double compose_scale, double work_scale):
     M(mesh_width), N(mesh_height), focal_length(focal_length),
-    compose_scale(compose_scale), work_scale(work_scale)
+    compose_scale(compose_scale), work_scale(work_scale),  old_features(NUM_IMAGES)
 {
     int features_per_image = MAX_FEATURES_PER_IMAGE;
     // 2 dimensions, x and y
@@ -34,7 +34,9 @@ MeshWarper::MeshWarper(int num_images, int mesh_width, int mesh_height,
     int smoothness_size = dims * num_images * (N - 1) * (M - 1) * 8;
     int local_size = dims * (num_images + (int)wrapAround + 1) * features_per_image;
 
-    int local_temporal_size = dims * (num_images + (int)wrapAround + 1) * MAX_TEMPORAL_FEATURES_PER_IMAGE;
+    int local_temporal_size = 0;
+    if (USE_TEMPORAL)
+        local_temporal_size = dims * (num_images + (int)wrapAround + 1) * MAX_TEMPORAL_FEATURES_PER_IMAGE;
 
     // Number of rows/equations needed for calculating the mesh
     int num_rows = global_size + smoothness_size + local_size + local_temporal_size;
@@ -120,33 +122,34 @@ void MeshWarper::createMesh(LockableVector<cv::Mat> &full_imgs, std::vector<cv::
     featurefinder::matchFeatures(features, pairwise_matches);
 
     vector<MatchesInfo> temporal_matches(NUM_IMAGES);
-    if (!prev_features.empty()) {
-        featurefinder::matchFeaturesTemporal(features, prev_features, temporal_matches);
-        for (int idx = 0; idx < temporal_matches.size(); ++idx) {
-            MatchesInfo &pw_matches = temporal_matches[idx];
-            if (VISUALIZE_TEMPORAL_MATCHES) {
-                Mat visual_matches;
-                drawMatches(images[idx], features[idx].keypoints, images[idx], prev_features[idx].keypoints, pw_matches.matches, visual_matches);
-                //lock full_imgs to stop drawing frames using the old calibration
-                full_imgs.lock();
-                showMat("visualized matches", visual_matches);
-                full_imgs.unlock();
+    vector<matchWithDst_t> selected_temp_matches[NUM_IMAGES];
+    if (USE_TEMPORAL) {
+        if (!prev_features.empty()) {
+            featurefinder::matchFeaturesTemporal(features, prev_features, temporal_matches);
+            for (int idx = 0; idx < temporal_matches.size(); ++idx) {
+                MatchesInfo &pw_matches = temporal_matches[idx];
+                if (VISUALIZE_TEMPORAL_MATCHES) {
+                    Mat visual_matches;
+                    drawMatches(images[idx], features[idx].keypoints, images[idx], prev_features[idx].keypoints, pw_matches.matches, visual_matches);
+                    //lock full_imgs to stop drawing frames using the old calibration
+                    full_imgs.lock();
+                    showMat("visualized matches", visual_matches);
+                    full_imgs.unlock();
+                }
             }
         }
-    }
 
-    vector<matchWithDst_t> all_temp_matches[NUM_IMAGES];
-    filterTemporalMatches(temporal_matches, features, all_temp_matches);
+        vector<matchWithDst_t> all_temp_matches[NUM_IMAGES];
+        filterTemporalMatches(temporal_matches, features, all_temp_matches);
 
 
-    vector<matchWithDst_t> selected_temp_matches[NUM_IMAGES];
-    int temporal_feat_per_image = MAX_TEMPORAL_FEATURES_PER_IMAGE;
-
-    // Select features_per_image amount of random features points from all_matches
-    for (int img = 0; img < NUM_IMAGES; ++img) {
-        for (int i = 0; i < min(temporal_feat_per_image, (int)(all_temp_matches[img].size())); ++i) {
-            matchWithDst_t match = all_temp_matches[img].at(i);
-            selected_temp_matches[img].push_back(match);
+        int temporal_feat_per_image = MAX_TEMPORAL_FEATURES_PER_IMAGE;
+        // Select features_per_image amount of random features points from all_matches
+        for (int img = 0; img < NUM_IMAGES; ++img) {
+            for (int i = 0; i < min(temporal_feat_per_image, (int)(all_temp_matches[img].size())); ++i) {
+                matchWithDst_t match = all_temp_matches[img].at(i);
+                selected_temp_matches[img].push_back(match);
+            }
         }
     }
 
@@ -196,14 +199,103 @@ void MeshWarper::createMesh(LockableVector<cv::Mat> &full_imgs, std::vector<cv::
         }
     }
 
+    vector<Point> old_selected_points[NUM_IMAGES];
+    // Convert matchWithDst_t to points, which is needed for the global term,
+    // use old points if featurepoints haven't moved significantly
+    for (int idx = 0; idx < NUM_IMAGES; ++idx) {
+        for (int i = 0; i < old_matches[idx].size(); ++i) {
+            int ft_id = old_matches[idx].at(i).match.queryIdx;
+            Point p = old_features.at(idx)[idx].keypoints.at(ft_id).pt;
+            old_selected_points[idx].push_back(p);
+        }
+    }
+
+
+
+    // fp_{sum,count,avg} are saved in format:
+    // [idx * 2] means feature points in left side of the image with id=idx
+    // [idx * 2 + 1] means feature points in right side of the image with id=idx
+    float fp_sum[NUM_IMAGES * 2] = {0};
+    float fp_count[NUM_IMAGES * 2] = {0};
+    float fp_avg[NUM_IMAGES * 2] = {0};
+
+
+    // Calculate average x-coordinate of the feature points for each image half
+    for (int idx = 0; idx < NUM_IMAGES; ++idx) {
+        for (int i = 0; i < selected_matches[idx].size(); ++i) {
+            DMatch m = selected_matches[idx].at(i).match;
+            int dst = selected_matches[idx].at(i).dst;
+            int src = idx;
+            int queryIdx = m.queryIdx;
+            int trainIdx = m.trainIdx;
+            Point2f p1 = features[src].keypoints[queryIdx].pt;
+            Point2f p2 = features[dst].keypoints[trainIdx].pt;
+
+            fp_sum[src * 2] += p1.x;
+            fp_sum[dst * 2 + 1] += p2.x;
+            fp_count[src * 2]++;
+            fp_count[dst * 2 + 1]++;
+        }
+    }
+
+    for (int idx = 0; idx < NUM_IMAGES; ++idx) {
+        fp_avg[idx * 2] = 0;
+        fp_avg[idx * 2 + 1] = 0;
+        if (fp_count[idx * 2] != 0)
+            fp_avg[idx * 2] = fp_sum[idx * 2] / fp_count[idx * 2];
+
+        if (fp_count[idx * 2 + 1] != 0)
+            fp_avg[idx * 2 + 1] = fp_sum[idx * 2 + 1] / fp_count[idx * 2 + 1];
+    }
+
+
+    // Decide whether features have moved significantly and need to be updated
+    bool use_old_features[6];
+    for (int idx = 0; idx < NUM_IMAGES; ++idx) {
+        use_old_features[idx] = false;
+        if (old_features.empty())
+            break;
+
+        // Image left of idx
+        int idx2 = (idx - 1 == -1) ? NUM_IMAGES - 1 : idx-1;
+
+        // Calculate average distance of matched feature points
+        float avg_diff = abs(fp_avg[idx * 2] - fp_avg[idx2 * 2 + 1]);
+        float avg_diff_prev = abs(prev_avg[idx * 2] - prev_avg[idx2 * 2 + 1]);
+
+        bool found_matches = fp_avg[idx * 2] != 0 && fp_avg[idx2 * 2 + 1] != 0;
+        bool found_prev_matches = prev_avg[idx * 2] != 0 && prev_avg[idx2 * 2 + 1] != 0;
+
+        // if average distance of matched features have moved more than RECALIB_THRESH
+        if ((abs(avg_diff - avg_diff_prev) < RECALIB_THRESH) || (!found_matches && found_prev_matches)) {
+            use_old_features[idx] = true;
+        } else {
+            /*
+            LOGLN("idx " << idx << " DIST: " << abs(avg_diff_prev - avg_diff));
+            LOGLN("found: " << found_matches << " prev_found: " << found_prev_matches);
+            LOGLN("fp count" << fp_count[idx * 2] << " " << fp_count[idx2 * 2 + 1]);
+            LOGLN("avg_diff:" << avg_diff << " diff_prev:" << avg_diff_prev);
+            LOGLN("fp_avg:" << fp_avg[idx * 2] << " " << fp_avg[idx2 * 2 + 1] <<
+            " prev_avg:" << prev_avg[idx * 2] << " " << prev_avg[idx2 * 2 + 1]);
+            */
+        }
+
+    }
+
 
     int rows_used = 0;
     for (int idx = 0; idx < NUM_IMAGES; ++idx) {
-        calcGlobalTerm(rows_used, selected_points[idx], mesh_size.at(idx), idx);
+        if (use_old_features[idx]) {
+            calcLocalTerm(rows_used, old_matches[idx], old_features.at(idx), idx);
+            calcGlobalTerm(rows_used, old_selected_points[idx], mesh_size.at(idx), idx);
+        } else  {
+            calcLocalTerm(rows_used, selected_matches[idx], features, idx);
+            calcGlobalTerm(rows_used, selected_points[idx], mesh_size.at(idx), idx);
+        }
         calcSmoothnessTerm(rows_used, images.at(idx), mesh_size.at(idx), idx);
-        calcLocalTerm(rows_used, selected_matches[idx], features, idx);
-
-        calcTemporalLocalTerm(rows_used, selected_temp_matches[idx], features, idx);
+        if (USE_TEMPORAL) {
+            calcTemporalLocalTerm(rows_used, selected_temp_matches[idx], features, idx);
+        }
     }
 
     // LeastSquaresConjudateGradientSolver solves equations that are in format |Ax + b|^2
@@ -224,10 +316,28 @@ void MeshWarper::createMesh(LockableVector<cv::Mat> &full_imgs, std::vector<cv::
         }
     }
 
-    //update previous selected features for temporal terms
+    //update previously selected features for temporal terms and dynamic calibration
     prev_features = features;
     for (int idx = 0; idx < NUM_IMAGES; ++idx) {
         prev_matches[idx] = selected_matches[idx];
+
+        int idx2 = (idx - 1 == -1) ? NUM_IMAGES - 1 : idx-1;
+        //TODO: don't skip matched features
+        if (use_old_features[idx] && !prev_matches[idx].empty() && !old_features.at(idx).empty()) {
+            continue;
+        }
+
+
+        old_matches[idx] = selected_matches[idx];
+        old_features.at(idx) = features;
+        prev_avg[idx * 2] = fp_avg[idx * 2];
+        prev_avg[idx * 2 + 1] = fp_avg[idx * 2 + 1];
+
+        old_matches[idx2] = selected_matches[idx2];
+        old_features.at(idx2) = features;
+        prev_avg[idx2 * 2] = fp_avg[idx2 * 2];
+        prev_avg[idx2 * 2 + 1] = fp_avg[idx2 * 2 + 1];
+
     }
 }
 
