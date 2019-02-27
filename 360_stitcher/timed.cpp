@@ -191,12 +191,6 @@ void consume(BlockingQueue<cuda::GpuMat> &results)
 
 	//Initialize final_result as a black image
 	Mat final_result = Mat(Size(OUTPUT_WIDTH, OUTPUT_HEIGHT), CV_8UC3, cv::Scalar(0));
-	if (save_video) {
-		outVideo.open("stitched.avi", VideoWriter::fourcc('M', 'J', 'P', 'G'), 30, Size(1920, 1080));
-		if (!outVideo.isOpened()) {
-            return;
-		}
-	}
     sts_net_socket_t server, socket;
 	int frame_counter = 0;
 	int iSendResult;
@@ -276,6 +270,12 @@ void consume(BlockingQueue<cuda::GpuMat> &results)
 			}
 			resize_dst_size = Size(OUTPUT_WIDTH, image_height);
 
+            if (save_video) {
+                outVideo.open("stitched.avi", VideoWriter::fourcc('M', 'J', 'P', 'G'), 30, Size(OUTPUT_WIDTH, image_height));
+                if (!outVideo.isOpened()) {
+                    return;
+                }
+            }
 		}
 
 		resize(original_8u, resized_bgr, resize_dst_size, 0, 0, INTER_LINEAR);
@@ -351,6 +351,9 @@ void consume(BlockingQueue<cuda::GpuMat> &results)
             LOGLN("encoded frame");
 		}
 
+        if (save_video || show_out)
+			cvtColor(final_result, final_result, CV_BGR2RGB);
+
 		if (save_video) {
 			outVideo << final_result;
 		}
@@ -362,7 +365,6 @@ void consume(BlockingQueue<cuda::GpuMat> &results)
 		}
 
 		if (show_out) {
-			cvtColor(final_result, final_result, CV_BGR2RGB);
 			imshow("Video", final_result);
 			waitKey(1);
 		}
