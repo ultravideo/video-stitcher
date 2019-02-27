@@ -179,10 +179,6 @@ void MeshWarper::createMesh(LockableVector<cv::Mat> &full_imgs, std::vector<cv::
 
     // Select features_per_image amount of random features points from all_matches
     for (int img = 0; img < NUM_IMAGES; ++img) {
-        /* std::sort(all_matches[img].begin(), all_matches[img].end(), */ 
-        /* [](matchWithDst_t a, matchWithDst_t b){ */
-        /*     return a.match.distance < b.match.distance; */
-        /* }); */
         for (int i = 0; i < min(features_per_image, (int)(all_matches[img].size())); ++i) {
             matchWithDst_t match = all_matches[img].at(i);
             selected_matches[img].push_back(match);

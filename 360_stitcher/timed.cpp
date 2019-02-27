@@ -421,10 +421,13 @@ void recalibrateMesh(std::shared_ptr<MeshWarper> &mw, LockableVector<Mat> &input
     vector<Size> mesh_size(NUM_IMAGES);
     int frame_amt = 0;
     bool first_cal = true;
+
+    int64 prev_calib_time = getTickCount();
+
     if (!recalibrate || !enable_local)
         return;
     while (true) {
-        if (frame_amt && (frame_amt % RECALIB_DEL == 0)) {
+        if ((getTickCount() - prev_calib_time) * 1000 / getTickFrequency() > RECALIB_DEL) {
             int64 t = getTickCount();
             if (mw != nullptr) {
                 x_mesh_old = x_mesh_new;
@@ -438,15 +441,17 @@ void recalibrateMesh(std::shared_ptr<MeshWarper> &mw, LockableVector<Mat> &input
                     y_mesh_old = y_mesh_new;
                     first_cal = false;
                 }
+                prev_calib_time = getTickCount();
             }
             LOGLN("Rewarp: " << (getTickCount() - t) * 1000 / getTickFrequency());
         } else if (!first_cal) {
             vector<Mat> x_mesh_interp(NUM_IMAGES);
             vector<Mat> y_mesh_interp(NUM_IMAGES);
-            float progress = (static_cast<float>(frame_amt % RECALIB_DEL)) / static_cast<float>(RECALIB_DEL);
+            float progress = (getTickCount() - prev_calib_time) * 1000 / getTickFrequency() / RECALIB_DEL;
             x_mesh_interp = mw->interpolateMesh(x_mesh_old, x_mesh_new, progress);
             y_mesh_interp = mw->interpolateMesh(y_mesh_old, y_mesh_new, progress);
             mw->convertMeshesToMap(x_mesh_interp, y_mesh_interp, x_mesh, y_mesh, mesh_size);
+            std::this_thread::sleep_for(std::chrono::milliseconds(30));
         }
         frame_amt++;
     }
