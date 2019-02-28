@@ -21,7 +21,6 @@ LD_FLAGS = -lcudart \
      -lopencv_videoio \
      -lopencv_video \
      -lopencv_videostab \
-     -lopencv_xfeatures2d \
      -lopencv_calib3d \
      -lkvazaar
 

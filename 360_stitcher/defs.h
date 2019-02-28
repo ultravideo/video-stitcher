@@ -30,7 +30,6 @@ const bool show_out = true;
 const bool use_stream = false;
 const bool clear_buffers = false;
 const bool debug_stream = false;
-const bool use_surf = false;
 const bool send_results = false;
 const bool send_height_info = true;
 const bool keep_aspect_ratio = true;

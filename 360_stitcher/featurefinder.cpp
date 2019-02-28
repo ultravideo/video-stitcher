@@ -13,7 +13,6 @@ using std::vector;
 void featurefinder::findFeatures(vector<Mat> &full_img, vector<Mat> &masks, vector<ImageFeatures> &features,
                   const double &work_scale) {
     Ptr<cuda::ORB> d_orb = cuda::ORB::create(2500, 1.2f, 8);
-    Ptr<SurfFeaturesFinderGpu> surf = makePtr<SurfFeaturesFinderGpu>(HESS_THRESH, NOCTAVES, NOCTAVESLAYERS);
     Mat image;
     cuda::GpuMat gpu_img;
     cuda::GpuMat gpu_mask;
@@ -31,39 +30,23 @@ void featurefinder::findFeatures(vector<Mat> &full_img, vector<Mat> &masks, vect
             cv::resize(full_img[i], image, Size(), work_scale, work_scale);
         }
 
-        if (use_surf) {
-            if (masks.at(i).empty()) {
-                (*surf)(image, features[i]);
-            } else {
-                // Find features with SURF feature finder
-                (*surf)(image, features[i], masks.at(i));
-            }
+        // Find features with ORB feature finder
+        gpu_img.upload(image);
+        cuda::cvtColor(gpu_img, gpu_img, CV_BGR2GRAY);
+        features[i].img_size = image.size();
+        if (masks.at(i).empty()) {
+            d_orb->detectAndCompute(gpu_img, noArray(), features[i].keypoints, descriptors);
+        } else {
+            gpu_mask.upload(masks.at(i));
+            d_orb->detectAndCompute(gpu_img, gpu_mask, features[i].keypoints, descriptors);
         }
-        else
-        {
-            // Find features with ORB feature finder
-            gpu_img.upload(image);
-            cuda::cvtColor(gpu_img, gpu_img, CV_BGR2GRAY);
-            features[i].img_size = image.size();
-            if (masks.at(i).empty()) {
-                d_orb->detectAndCompute(gpu_img, noArray(), features[i].keypoints, descriptors);
-            } else {
-                gpu_mask.upload(masks.at(i));
-                d_orb->detectAndCompute(gpu_img, gpu_mask, features[i].keypoints, descriptors);
-            }
-            descriptors.download(features[i].descriptors);
-        }
+        descriptors.download(features[i].descriptors);
         features[i].img_idx = i;
     }
 }
 
 void featurefinder::matchFeatures(vector<ImageFeatures> &features, vector<MatchesInfo> &pairwise_matches) {
     // Use different way of matching features for SURF and ORB
-    if (use_surf) {
-        Ptr<FeaturesMatcher> fm = makePtr<BestOf2NearestMatcher>(true, MATCH_CONF);
-        (*fm)(features, pairwise_matches);
-        return;
-    }
     Ptr<DescriptorMatcher> dm = DescriptorMatcher::create("BruteForce-Hamming");
 
     int num_images = features.size();
@@ -126,11 +109,6 @@ void featurefinder::matchFeatures(vector<ImageFeatures> &features, vector<Matche
 
 void featurefinder::matchFeaturesTemporal(vector<ImageFeatures> &features, vector<ImageFeatures> &prev_features, vector<MatchesInfo> &pairwise_matches) {
     // Use different way of matching features for SURF and ORB
-    if (use_surf) {
-        Ptr<FeaturesMatcher> fm = makePtr<BestOf2NearestMatcher>(true, MATCH_CONF);
-        (*fm)(features, pairwise_matches);
-        return;
-    }
     Ptr<DescriptorMatcher> dm = DescriptorMatcher::create("BruteForce-Hamming");
 
     int num_images = features.size();

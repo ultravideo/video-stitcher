@@ -81,9 +81,6 @@ void MeshWarper::createMesh(LockableVector<cv::Mat> &full_imgs, std::vector<cv::
 
     vector<Mat> feature_mask(full_imgs_count);
     for (int idx = 0; idx < NUM_IMAGES; ++idx) {
-        if (use_surf) { //TODO: masks don't seem to work on surf
-            continue;
-        }
         feature_mask.at(idx) = Mat(images.at(idx).rows, images.at(idx).cols, CV_8U);
         feature_mask.at(idx).setTo(Scalar::all(0));
         //TODO: calculate overlap
