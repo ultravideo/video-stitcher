@@ -54,7 +54,8 @@ bool calibrateCameras(vector<CameraParams> &cameras, const cv::Size full_img_siz
         cameras[i].R = rotMat;
 		cameras[i].ppx = (full_img_size.width * work_scale) / 2.0;
         cameras[i].ppy = (full_img_size.height * work_scale) / 2.0; // principal point y
-		cameras[i].aspect = 16.0 / 9.0; //as it is known the cameras have 1080p resolution, the aspect ratio is known to be 16:9
+		cameras[i].aspect = 1;
+		// cameras[i].aspect = 16.0 / 9.0; //as it is known the cameras have 1080p resolution, the aspect ratio is known to be 16:9
 		//in 1080p resolution with medium fov (127 degrees) the focal lengt is 21mm.
 		// with fov 170 degrees the focal lenth is 14mm and with fov 90 degrees the focal length is 28mm 
 		// This information from gopro cameras is found from internet may be different for the model used in the grid!!!
