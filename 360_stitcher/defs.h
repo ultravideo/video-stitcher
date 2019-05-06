@@ -47,6 +47,7 @@ const int offsets[NUM_IMAGES] = { -92+134, 30+134, 28+134, 0+134, -40+134, -134+
 //const int offsets[NUM_IMAGES] = { 0 }; // dynamic
 const int RECALIB_DEL = 1000;
 const int RECALIB_THRESH = 15; //How many pixels of change until recalibrating a seam
+const bool RECALIB_INTERP = false;
 const double WORK_MEGAPIX = 0.6;	//0.6;	//-1			// Megapix parameter is scaled to the number
 const double SEAM_MEAGPIX = 0.01;							// of pixels in full image and this is used
 const double COMPOSE_MEGAPIX = 1.4;	//1.4;	//2.2;	//-1	// as a scaling factor when resizing images

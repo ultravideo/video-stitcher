@@ -374,7 +374,7 @@ void consume(BlockingQueue<cuda::GpuMat> &results)
 			tp2 = std::chrono::high_resolution_clock::now();
             float delta_time = static_cast<float>(std::chrono::duration_cast<std::chrono::milliseconds>(tp2 - tp).count());
             float fps = 30.0f / (delta_time / 1000.0f);
-			LOGLN("delta time 30 frames: " << delta_time << " fps: " << fps << " ms");
+			LOGLN("delta time 30 frames: " << delta_time << " ms fps: " << fps << " fps delta time frame: " << delta_time / 30.0f << " ms");
             std::chrono::duration_cast<std::chrono::milliseconds>(tp2 - tp).count();
 			frame_counter = 0;
 			tp = std::chrono::high_resolution_clock::now();
@@ -438,7 +438,10 @@ void recalibrateMesh(std::shared_ptr<MeshWarper> &mw, LockableVector<Mat> &input
                 vector<ImageFeatures> features(NUM_IMAGES);
                 vector<MatchesInfo> pairwise_matches(NUM_IMAGES - 1 + (int)wrapAround);
                 mw->createMesh(input, features, pairwise_matches, x_mesh_new, y_mesh_new, x_maps, y_maps, mesh_size);
-                if (first_cal) {
+                if (!RECALIB_INTERP) {
+                    mw->convertMeshesToMap(x_mesh_new, y_mesh_new, x_mesh, y_mesh, mesh_size);
+                }
+                if (first_cal && RECALIB_INTERP) {
                     x_mesh_old = x_mesh_new;
                     y_mesh_old = y_mesh_new;
                     first_cal = false;
@@ -446,7 +449,7 @@ void recalibrateMesh(std::shared_ptr<MeshWarper> &mw, LockableVector<Mat> &input
                 prev_calib_time = getTickCount();
             }
             LOGLN("Rewarp: " << (getTickCount() - t) * 1000 / getTickFrequency());
-        } else if (!first_cal) {
+        } else if (!first_cal && RECALIB_INTERP) {
             vector<Mat> x_mesh_interp(NUM_IMAGES);
             vector<Mat> y_mesh_interp(NUM_IMAGES);
             float progress = (getTickCount() - prev_calib_time) * 1000 / getTickFrequency() / RECALIB_DEL;
