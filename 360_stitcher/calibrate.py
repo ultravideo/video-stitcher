@@ -45,6 +45,8 @@ while True:
         offsets[key - ord('1')] += step
     if key == ord('0'):
         index += step
+    if key == ord('9'):
+    	index -= step
     if key == ord('q'):
         break
     if key == ord('w'):

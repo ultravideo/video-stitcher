@@ -6,7 +6,9 @@ Huomiot Cudan asennuksesta:
 		"C:\ProgramData\NVIDIA Corporation\CUDA Samples\v9.2\1_Utilities" (kääntyy polkuun "C:\ProgramData\NVIDIA Corporation\CUDA Samples\v9.2\bin\win64\Release")
 			- Aja ohjelma komentorivillä.
 	- Lisää ohjeita: https://docs.nvidia.com/cuda/cuda-installation-guide-microsoft-windows/index.html (osa vähän vanhentuneita)
-* ÄLÄ asenna visualstudio 2017 päivityksiä, koska ne rikkovat cuda-yhteensopivuuden.
+* Asenna Visualstudion 2017 versioon v140 toolsetti (https://blogs.msdn.microsoft.com/vcblog/2017/11/15/side-by-side-minor-version-msvc-toolsets-in-visual-studio-2017/), jotta projektit kääntyy...
+	- Valitse projekti käännettäväksi visualstudio 2015 v140:llä (Project -> Properties -> General -> Platform Toolset)
+	- Aseta tarvittaessa projektitiedostoon cudan .props ja .target polut oikein (rivit 56 ja 153)
 
 OpenCV riippuvuudet:
 
@@ -19,3 +21,29 @@ OpenCV riippuvuudet:
 	- katso, että kääntäjä on VC kääntäjä! (cmake defaulttina hakee väärästä polusta kääntäjää)
 * numpy
 * (java?)
+
+
+OpenCV:n dll:t tarvitsee kopioida käännöshakemistoihin. Projektin debug-versio käyttää openCV:n debug -kirjastoja, joten openCV täytyy kääntää myös debug -asetuksella.
+Tarvittavia DLL:iä ovat ainkin:
+
+opencv_calib3d340.dll
+opencv_core340.dll
+opencv_cudaaritm340.dll
+opencv_cudafeatures2d340.dll
+opencv_cudafilters340.dll
+opencv_cudaimgproc340.dll
+opencv_cudalegacy340.dll
+opencv_cudawarping340.dll
+opencv_feature2d340.dll
+opencv_ffmpeg340.dll (TÄMÄN PUUTTUMINEN EI AIHEUTA KAATUMISTA EIKÄ VIRHEILMOA, MUTTA ESIM. VIDEOTA EI SAA AVATTUA)
+opencv_flann340.dll
+opencv_highgui340.dll
+opencv_imgproc340.dll
+opencv_objdetect340.dll
+opencv_stitching340.dll
+opencv_videoio340.dll
+opencv_xfeatures2d340.dl
+
+Debugversioissa pääte on *340d.dll
+
+DLL:t löytyy hakemiston $(ProjectDir)..\opencv_build\bin alihakemistoista Release ja Debug (olettaen, että openCV:n käännöskohdehakemistoksi on asetettu $(ProjectDir)..\opencv_build cmakessa).

@@ -323,6 +323,7 @@ ASALocalRun/
 *.JPG
 *.avi
 *.png
+*.lib
 
 *.pptx
 360_stitcher/external/
