@@ -1,4 +1,24 @@
 # Live Stitching
+
+## Paper
+
+Please cite [this paper](https://ieeexplore.ieee.org/document/8965900) for the video stitcher:
+
+```M. Atokari, M. Viitanen, A. Mercat, E. Kattainen, and J. Vanne, “Parallax-tolerant 360 live video stitcher,” in Proc. IEEE Int. Conf. Visual Comm. and Image Proc., Sydney, Australia, Dec. 2019.```
+
+Or in BibTex:
+
+```
+@inproceedings{Atokari2019,
+  author={M. {Atokari} and M. {Viitanen} and A. {Mercat} and E. {Kattainen} and J. {Vanne}},
+  booktitle={2019 IEEE Visual Communications and Image Processing (VCIP)},
+  title={Parallax-Tolerant 360 Live Video Stitcher},
+  year={2019},
+  location = {Sydney, Australia},
+  doi={10.1109/VCIP47243.2019.8965900},
+}
+```
+
 ## Building
 ### Requirements
 - CUDA
